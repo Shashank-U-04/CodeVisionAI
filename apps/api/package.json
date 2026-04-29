@@ -1,0 +1,10 @@
+{
+  "name": "api",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "uvicorn app.main:app --reload",
+    "build": "echo \"Python backend does not require a build step\"",
+    "start": "uvicorn app.main:app --host 0.0.0.0 --port 8000"
+  }
+}
