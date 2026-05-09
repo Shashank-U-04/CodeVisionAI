@@ -128,3 +128,130 @@
     @apply font-sans;
   }
 }
+
+/* ────────────────────────────────────────────────────────────────────────
+   CodeVision AI — visualization theme tokens
+   ──────────────────────────────────────────────────────────────────────── */
+
+:root {
+  /* dark theme defaults */
+  --cv-bg:              #0a0a0d;
+  --cv-panel:           #131318;
+  --cv-panel-deep:      #1a1a22;
+  --cv-fg:              #f4f4f5;
+  --cv-muted:           #8b8b94;
+  --cv-border:          #2a2a35;
+
+  --cv-accent:          #60a5fa;
+  --cv-arrow:           #60a5fa;
+  --cv-success:         #16a34a;
+  --cv-danger:          #dc2626;
+
+  /* active stack frame highlight (deep blue glow) */
+  --cv-active-border:    #3b82f6;
+  --cv-active-glow:      rgba(59,130,246,0.20);
+  --cv-active-header-bg: #1e3a8a;
+  --cv-active-header-fg: #dbeafe;
+  --cv-frame-active-bg:  #0e1530;
+  --cv-frame-header-bg:  #1d1d27;
+
+  /* return value row */
+  --cv-return-bg: rgba(34,197,94,0.10);
+  --cv-return-fg: #4ade80;
+
+  /* primitive value colors */
+  --cv-int:    #60a5fa;
+  --cv-float:  #93c5fd;
+  --cv-str:    #4ade80;
+  --cv-bool:   #c084fc;
+
+  /* heap object border colors per type */
+  --cv-heap-list:     #4ade80;
+  --cv-heap-tuple:    #facc15;
+  --cv-heap-dict:     #fb923c;
+  --cv-heap-set:      #f472b6;
+  --cv-heap-function: #c084fc;
+  --cv-heap-class:    #c084fc;
+  --cv-heap-instance: #22d3ee;
+
+  /* changed-variable yellow flash */
+  --cv-flash-bg: rgba(252, 211, 77, 0.25);
+}
+
+html[data-theme='light'] {
+  --cv-bg:              #fafafa;
+  --cv-panel:           #ffffff;
+  --cv-panel-deep:      #f4f4f5;
+  --cv-fg:              #18181b;
+  --cv-muted:           #71717a;
+  --cv-border:          #e4e4e7;
+
+  --cv-accent:          #2563eb;
+  --cv-arrow:           #2563eb;
+
+  --cv-active-border:    #2563eb;
+  --cv-active-glow:      rgba(37,99,235,0.18);
+  --cv-active-header-bg: #dbeafe;
+  --cv-active-header-fg: #1e3a8a;
+  --cv-frame-active-bg:  #eff6ff;
+  --cv-frame-header-bg:  #f4f4f5;
+
+  --cv-return-bg: rgba(22,163,74,0.10);
+  --cv-return-fg: #15803d;
+
+  --cv-int:    #2563eb;
+  --cv-float:  #1d4ed8;
+  --cv-str:    #15803d;
+  --cv-bool:   #7c3aed;
+
+  --cv-heap-list:     #16a34a;
+  --cv-heap-tuple:    #ca8a04;
+  --cv-heap-dict:     #ea580c;
+  --cv-heap-set:      #db2777;
+  --cv-heap-function: #7c3aed;
+  --cv-heap-class:    #7c3aed;
+  --cv-heap-instance: #0891b2;
+
+  --cv-flash-bg: rgba(252, 211, 77, 0.5);
+}
+
+/* changed-variable yellow flash animation */
+@keyframes cv-flash {
+  0%   { background-color: var(--cv-flash-bg); }
+  100% { background-color: transparent; }
+}
+.cv-flash {
+  animation: cv-flash 700ms ease-out;
+}
+
+/* Monaco — current execution line highlight + red gutter arrow */
+.cv-current-line {
+  background-color: rgba(255, 210, 50, 0.12) !important;
+}
+.cv-current-line-glyph {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'><path d='M3 2 L13 8 L3 14 Z' fill='%23ef4444'/></svg>");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 11px 11px;
+}
+
+/* Step slider thumb */
+.cv-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--cv-active-border);
+  border: 2px solid var(--cv-bg);
+  box-shadow: 0 0 0 2px var(--cv-active-border);
+  cursor: pointer;
+}
+.cv-slider::-moz-range-thumb {
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--cv-active-border);
+  border: 2px solid var(--cv-bg);
+  box-shadow: 0 0 0 2px var(--cv-active-border);
+  cursor: pointer;
+}
+
+/* xterm container: fills its parent */
+.xterm, .xterm-viewport, .xterm-screen { height: 100% !important; }
+.xterm-viewport { background: var(--cv-bg) !important; }
