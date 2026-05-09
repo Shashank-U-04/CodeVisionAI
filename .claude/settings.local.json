@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Shashank U\\\\Documents\\\\GitHub\\\\OnlinePythonTutor\" -Force)",
+      "Bash(Select-Object Name, PSIsContainer)",
+      "Bash(Sort-Object PSIsContainer -Descending)",
+      "Bash(git -C \"C:\\\\Users\\\\Shashank U\\\\Documents\\\\GitHub\\\\OnlinePythonTutor\" log --oneline)",
+      "Bash(npm install *)",
+      "Bash(npx tsc *)",
+      "Bash(npm run *)"
+    ]
+  }
+}
