@@ -35,10 +35,11 @@ export function HeapObject({ object }: Props) {
   return (
     <div
       data-heap-id={object.id}
-      className="rounded-lg overflow-hidden shadow-md"
+      className="inline-flex flex-col rounded-lg overflow-hidden shadow-md"
       style={{
         border: `1.5px solid var(${colorVar})`,
         background: `color-mix(in oklab, var(${colorVar}) 8%, var(--cv-panel))`,
+        minWidth: 'min-content',
       }}
     >
       {/* Header */}
@@ -119,7 +120,7 @@ function SequenceCells({ obj }: { obj: { id: number; elements: import('@codevisi
           >
             {i}
           </div>
-          <div className="px-3 py-1.5 text-center min-w-[44px]">
+          <div className="px-2 py-1.5 text-center min-w-[28px]">
             <StackValueDisplay value={el} refAnchor={`heap-${obj.id}-i${i}`} />
           </div>
         </div>
@@ -156,7 +157,7 @@ function DictTable({ obj }: { obj: { id: number; pairs: Array<[import('@codevisi
     return <span className="text-xs italic" style={{ color: 'var(--cv-muted)' }}>empty</span>;
   }
   return (
-    <table className="w-full text-xs">
+    <table className="text-xs">
       <tbody>
         {obj.pairs.map(([k, v], i) => (
           <tr key={i} style={{ borderTop: i > 0 ? '1px solid var(--cv-border)' : 'none' }}>
@@ -181,7 +182,7 @@ function InstanceTable({ obj }: { obj: { id: number; attrs: Record<string, impor
     return <span className="text-xs italic" style={{ color: 'var(--cv-muted)' }}>no attributes</span>;
   }
   return (
-    <table className="w-full text-xs">
+    <table className="text-xs">
       <tbody>
         {entries.map(([k, v], i) => (
           <tr key={k} style={{ borderTop: i > 0 ? '1px solid var(--cv-border)' : 'none' }}>

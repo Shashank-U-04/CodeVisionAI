@@ -15,11 +15,6 @@ interface Props {
   onStart: () => void;
 }
 
-/**
- * Walk all stack values + heap objects to compute the set of heap ids
- * actually reachable from the call stack. Anything not in this set is
- * pruned from the heap panel.
- */
 function computeReachableIds(state: ExecutionState): Set<number> {
   const reachable = new Set<number>();
   const queue: number[] = [];
@@ -31,13 +26,11 @@ function computeReachableIds(state: ExecutionState): Set<number> {
     }
   };
 
-  // Seed from every stack frame
   for (const frame of state.frames) {
     for (const v of Object.values(frame.locals)) visitValue(v);
     if (frame.returnValue) visitValue(frame.returnValue);
   }
 
-  // BFS through heap → heap references
   while (queue.length > 0) {
     const id = queue.shift()!;
     const obj = state.heap[id];
@@ -80,36 +73,31 @@ export function VisualizationPanel({ state, status, hasStarted, stepCount, onSta
   return (
     <div
       ref={containerRef}
-      className="relative flex-1 overflow-hidden"
+      className="relative flex-1 overflow-auto"
       style={{ background: 'var(--cv-bg)' }}
     >
-      <div className="absolute inset-0 flex">
-        {/* Stack column ~40% of right area */}
-        <div
-          className="flex-shrink-0 overflow-hidden"
-          style={{ width: '42%', borderRight: '1px solid var(--cv-border)' }}
-        >
-          {state ? (
+      {state ? (
+        // Python Tutor-style layout: Frames column | wire gap | Objects column.
+        // Both columns live in ONE scrollable container so they scroll together.
+        // fit-content(230px) auto-sizes the frames column to its content (max 230px).
+        <div style={{ display: 'grid', gridTemplateColumns: 'fit-content(230px) 1fr', minHeight: '100%' }}>
+          {/* Frames column — shrinks to widest variable name + value */}
+          <div style={{ minWidth: '130px', borderRight: '1px solid var(--cv-border)' }}>
             <StackPanel frames={state.frames} changedVars={state.changedVars} />
-          ) : (
-            <EmptyHint isExecuting={isExecuting} stepCount={stepCount} />
-          )}
-        </div>
+          </div>
 
-        {/* Heap column ~60% */}
-        <div className="flex-1 overflow-hidden">
-          {state ? (
+          {/* Objects column — padding-left creates the wire-gap for arrows */}
+          <div style={{ minWidth: '280px', paddingLeft: '96px' }}>
             <HeapPanel heap={state.heap} reachableIds={reachable} />
-          ) : (
-            <EmptyHint isExecuting={isExecuting} stepCount={stepCount} subtle />
-          )}
+          </div>
         </div>
-      </div>
+      ) : (
+        <EmptyHint isExecuting={isExecuting} stepCount={stepCount} />
+      )}
 
-      {/* Bezier arrows overlay */}
+      {/* Bezier arrows — positioned in content-coordinate space */}
       <ArrowLayer containerRef={containerRef} state={state} />
 
-      {/* Start-Visualization gate (shown after Run finishes, before playback) */}
       {showOverlay && <StartVisualizationOverlay stepCount={stepCount} onStart={onStart} />}
     </div>
   );
@@ -118,13 +106,10 @@ export function VisualizationPanel({ state, status, hasStarted, stepCount, onSta
 function EmptyHint({
   isExecuting,
   stepCount,
-  subtle,
 }: {
   isExecuting: boolean;
   stepCount: number;
-  subtle?: boolean;
 }) {
-  if (subtle) return null;
   return (
     <div className="h-full flex flex-col items-center justify-center gap-2 px-6 text-center">
       {isExecuting ? (

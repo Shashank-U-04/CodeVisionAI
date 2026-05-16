@@ -5,7 +5,6 @@ import type { ExecutionState } from '@codevision/visualizer-engine';
 import { cubicHorizontal, rightAnchor, leftAnchor, colorForId } from '@/lib/arrows';
 
 interface Props {
-  // The container whose coordinate space we draw in (right column).
   containerRef: React.RefObject<HTMLDivElement | null>;
   state: ExecutionState | null;
 }
@@ -21,13 +20,13 @@ export function ArrowLayer({ containerRef, state }: Props) {
   const [size, setSize] = useState({ w: 0, h: 0 });
   const rafRef = useRef<number | null>(null);
 
-  // Recompute paths whenever the state changes OR the container resizes.
   const recompute = () => {
     const container = containerRef.current;
     if (!container) return;
 
-    const rect = container.getBoundingClientRect();
-    setSize({ w: rect.width, h: rect.height });
+    // Use scroll dimensions so the SVG covers the full content area, not just
+    // the visible viewport — required now that the container scrolls.
+    setSize({ w: container.scrollWidth, h: container.scrollHeight });
 
     if (!state) {
       setArrows([]);
@@ -36,11 +35,7 @@ export function ArrowLayer({ containerRef, state }: Props) {
 
     const next: ArrowSpec[] = [];
 
-    // Every reference cell — both in stack frames and inside heap objects —
-    // is rendered with a [data-arrow-source] attribute carrying its key.
-    // We pair each one with the matching heap object box [data-heap-id].
     const sources = container.querySelectorAll<HTMLElement>('[data-arrow-source]');
-
     sources.forEach((srcEl) => {
       const refIdAttr = srcEl.querySelector<HTMLElement>('[data-ref-id]')?.dataset.refId;
       if (!refIdAttr) return;
@@ -73,24 +68,34 @@ export function ArrowLayer({ containerRef, state }: Props) {
     const container = containerRef.current;
     if (!container) return;
 
-    const ro = new ResizeObserver(() => {
+    const schedule = () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       rafRef.current = requestAnimationFrame(recompute);
-    });
+    };
+
+    const ro = new ResizeObserver(schedule);
     ro.observe(container);
-    return () => ro.disconnect();
+    // Observe direct children so content height growth is detected.
+    Array.from(container.children).forEach((child) => ro.observe(child));
+
+    // Recompute on scroll so SVG dimensions stay in sync.
+    container.addEventListener('scroll', schedule, { passive: true });
+
+    return () => {
+      ro.disconnect();
+      container.removeEventListener('scroll', schedule);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
     <svg
-      className="pointer-events-none absolute inset-0"
+      className="pointer-events-none absolute"
+      style={{ top: 0, left: 0 }}
       width={size.w}
       height={size.h}
-      style={{ overflow: 'visible' }}
     >
       <defs>
-        {/* One arrowhead per palette color */}
         {Array.from(new Set(arrows.map((a) => a.color))).map((color) => (
           <marker
             key={color}
@@ -115,9 +120,7 @@ export function ArrowLayer({ containerRef, state }: Props) {
           strokeWidth={1.5}
           strokeOpacity={0.9}
           markerEnd={`url(#arrowhead-${a.color.slice(1)})`}
-          style={{
-            transition: 'd 200ms ease-out, stroke 200ms ease-out',
-          }}
+          style={{ transition: 'd 200ms ease-out, stroke 200ms ease-out' }}
         />
       ))}
     </svg>

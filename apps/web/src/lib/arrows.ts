@@ -22,22 +22,29 @@ export function cubicHorizontal(from: Point, to: Point): string {
 }
 
 /**
- * Returns the right-edge midpoint of an element, in coordinates relative
- * to the given container.
+ * Returns the right-edge midpoint of an element in the container's content
+ * coordinate space (accounts for scroll offset so arrows stay correct when
+ * the container is scrolled).
  */
-export function rightAnchor(el: Element, container: Element): Point {
+export function rightAnchor(el: Element, container: HTMLElement): Point {
   const eb = el.getBoundingClientRect();
   const cb = container.getBoundingClientRect();
-  return { x: eb.right - cb.left, y: eb.top + eb.height / 2 - cb.top };
+  return {
+    x: eb.right - cb.left + container.scrollLeft,
+    y: eb.top + eb.height / 2 - cb.top + container.scrollTop,
+  };
 }
 
 /**
- * Left-edge midpoint of an element, relative to the container.
+ * Left-edge midpoint of an element in the container's content coordinate space.
  */
-export function leftAnchor(el: Element, container: Element): Point {
+export function leftAnchor(el: Element, container: HTMLElement): Point {
   const eb = el.getBoundingClientRect();
   const cb = container.getBoundingClientRect();
-  return { x: eb.left - cb.left, y: eb.top + eb.height / 2 - cb.top };
+  return {
+    x: eb.left - cb.left + container.scrollLeft,
+    y: eb.top + eb.height / 2 - cb.top + container.scrollTop,
+  };
 }
 
 /**

@@ -17,19 +17,19 @@ export function HeapPanel({ heap, reachableIds }: Props) {
 
   if (objects.length === 0) {
     return (
-      <div className="flex items-center justify-center h-full text-sm italic" style={{ color: 'var(--cv-muted)' }}>
+      <div className="p-3 text-sm italic" style={{ color: 'var(--cv-muted)' }}>
         Heap is empty
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col gap-3 p-3 overflow-y-auto h-full">
+    <div className="flex flex-col gap-3 p-3 items-start">
       <div
         className="text-[10px] uppercase tracking-widest font-semibold"
         style={{ color: 'var(--cv-muted)' }}
       >
-        Heap · {objects.length} object{objects.length === 1 ? '' : 's'}
+        Objects
       </div>
       {objects.map((obj) => (
         <HeapObject key={obj.id} object={obj} />
