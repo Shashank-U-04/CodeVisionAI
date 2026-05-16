@@ -15,7 +15,7 @@
 ## Project Structure
 
 ```
-OnlinePythonTutor/
+CodeVisionAI/
 ├── apps/
 │   ├── web/          # Next.js 16 frontend (main app)
 │   └── api/          # Python FastAPI backend (optional, unused in browser mode)
