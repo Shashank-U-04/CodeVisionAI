@@ -30,3 +30,10 @@ Thumbs.db
 
 # Turborepo
 .turbo/
+
+# Claude Code — agent worktrees & project cache (not source code)
+.claude/worktrees/
+.claude/projects/
+
+# Design bundle exports (temporary)
+design-bundle/
