@@ -1,6 +1,13 @@
 import type { Metadata } from 'next';
 import localFont from 'next/font/local';
+import { Space_Grotesk } from 'next/font/google';
 import './globals.css';
+
+const spaceGrotesk = Space_Grotesk({
+  subsets: ['latin'],
+  variable: '--font-space-grotesk',
+  display: 'swap',
+});
 
 const geistSans = localFont({
   src: '../../public/fonts/geist-latin.woff2',
@@ -17,7 +24,7 @@ const geistMono = localFont({
 export const metadata: Metadata = {
   title: 'CodeVision AI — Interactive Python Visualizer',
   description:
-    'Step-through Python execution with live stack frame visualization and interactive input() support. Powered by Pyodide.',
+    'Step through Python execution with live stack frame visualization and heap objects. Powered by Pyodide.',
 };
 
 export default function RootLayout({
@@ -26,8 +33,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${geistSans.variable} ${geistMono.variable} dark h-full`}>
-      <body className="h-full overflow-hidden">{children}</body>
+    <html
+      lang="en"
+      data-theme="light"
+      className={`${spaceGrotesk.variable} ${geistSans.variable} ${geistMono.variable} h-full`}
+    >
+      <body className="h-full">{children}</body>
     </html>
   );
 }

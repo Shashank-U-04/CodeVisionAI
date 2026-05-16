@@ -11,7 +11,7 @@ interface ThemeStore {
 }
 
 export const useThemeStore = create<ThemeStore>()((set) => ({
-  theme: 'dark',
+  theme: 'light',
   toggle: () =>
     set((prev) => {
       const next: Theme = prev.theme === 'dark' ? 'light' : 'dark';
