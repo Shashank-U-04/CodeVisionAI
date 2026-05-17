@@ -17,9 +17,9 @@ export function CTASection() {
             Ready to see your code think?
           </h2>
           <p style={{ fontSize: 17, color: 'var(--cv-text-muted)', marginBottom: 28, maxWidth: 440, margin: '0 auto 28px', fontFamily: 'var(--cv-font)' }}>
-            Start visualizing Python execution in seconds. No install, no signup required.
+            Start visualizing code execution in seconds. Supports Python with full visualization, plus C, C++, and Java editor support. No install required.
           </p>
-          <Link href="/app" style={{
+          <Link href="/app?pick=1" style={{
             display: 'inline-flex', alignItems: 'center', gap: 8,
             padding: '14px 28px', borderRadius: 'var(--cv-radius-lg)',
             background: 'var(--cv-primary)', color: 'var(--cv-primary-text)',

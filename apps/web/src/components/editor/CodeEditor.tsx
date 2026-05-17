@@ -9,9 +9,10 @@ interface Props {
   currentLine: number | null;
   readOnly?: boolean;
   onLineClick?: (line: number) => void;
+  language?: string;
 }
 
-export function CodeEditor({ value, onChange, currentLine, readOnly = false, onLineClick }: Props) {
+export function CodeEditor({ value, onChange, currentLine, readOnly = false, onLineClick, language }: Props) {
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
   const monacoRef = useRef<Parameters<OnMount>[1] | null>(null);
   const decorationsRef = useRef<string[]>([]);
@@ -63,7 +64,7 @@ export function CodeEditor({ value, onChange, currentLine, readOnly = false, onL
   return (
     <MonacoEditor
       height="100%"
-      language="python"
+      language={language ?? 'python'}
       theme="vs-dark"
       value={value}
       onChange={(val) => onChange(val ?? '')}

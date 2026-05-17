@@ -74,7 +74,7 @@ export function FeaturesSection() {
     {
       icon: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--cv-primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" /></svg>,
       title: 'Step-by-step execution',
-      desc: 'Move forward and backward through every line of your Python code. See exactly what happens at each step.',
+      desc: 'Move forward and backward through every line of your code. See exactly what happens at each step.',
     },
     {
       icon: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--cv-secondary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><path d="M14 17h7M17.5 14v7" /></svg>,
@@ -86,10 +86,18 @@ export function FeaturesSection() {
       title: 'AI explanations',
       desc: "Get plain-English explanations of what's happening at each step. Perfect for understanding recursion, OOP, and more.",
     },
+    {
+      icon: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--cv-secondary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <polyline points="16 18 22 12 16 6" />
+        <polyline points="8 6 2 12 8 18" />
+      </svg>,
+      title: 'Multi-language support',
+      desc: 'Visualize Python fully, with C, C++, and Java editor support. Choose your language before diving in.',
+    },
   ];
 
   return (
-    <section style={{ padding: '80px 32px', background: 'var(--cv-surface)' }}>
+    <section id="features" style={{ padding: '80px 32px', background: 'var(--cv-surface)' }}>
       <div style={{ maxWidth: 1200, margin: '0 auto' }}>
         <FadeInSection>
           <div style={{ textAlign: 'center', marginBottom: 56 }}>
@@ -97,11 +105,11 @@ export function FeaturesSection() {
               Everything you need to understand code
             </h2>
             <p style={{ fontSize: 17, color: 'var(--cv-text-muted)', maxWidth: 520, margin: '0 auto', fontFamily: 'var(--cv-font)' }}>
-              Built for learners, loved by educators. Visualize Python execution like never before.
+              Built for learners, loved by educators. Visualize Python, C, C++, and Java execution like never before.
             </p>
           </div>
         </FadeInSection>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 24 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 24 }}>
           {features.map((f, i) => (
             <FadeInSection key={i} delay={i * 0.1}>
               <FeatureCard {...f} />

@@ -1,52 +1,70 @@
 'use client';
 
 import { useEffect, useRef, useCallback } from 'react';
-import { VisualizerEngine } from '@codevision/visualizer-engine';
-import type { EngineEvent } from '@codevision/visualizer-engine';
+import { createEngine } from '@codevision/visualizer-engine';
+import type { Engine, EngineEvent, EngineLanguage } from '@codevision/visualizer-engine';
 import { useExecutionStore } from '@/stores/executionStore';
+import { useLanguageStore } from '@/stores/languageStore';
 import type { XTermHandle } from '@/components/terminal/XTermConsole';
 
-export function useEngine() {
-  const engineRef = useRef<VisualizerEngine | null>(null);
-  const termRef = useRef<XTermHandle | null>(null);
-  const store = useExecutionStore();
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://127.0.0.1:8000';
 
-  const buildHandlers = useCallback((engine: VisualizerEngine) => {
+// `python` runs in-browser via Pyodide; everything else streams from the
+// FastAPI backend. Keeping this map here means the workspace doesn't need
+// to know about engine selection.
+function engineLanguageFor(uiLanguage: string | null): EngineLanguage {
+  if (uiLanguage === 'c' || uiLanguage === 'cpp' || uiLanguage === 'java') {
+    return uiLanguage;
+  }
+  return 'python';
+}
+
+export function useEngine() {
+  const engineRef = useRef<Engine | null>(null);
+  const termRef = useRef<XTermHandle | null>(null);
+
+  const selectedLanguage = useLanguageStore((s) => s.selectedLanguage);
+
+  const buildHandlers = useCallback((engine: Engine) => {
     engine.onEvent = (event: EngineEvent) => {
       const term = termRef.current;
+      const store = useExecutionStore.getState();
       switch (event.type) {
         case 'READY':
-          useExecutionStore.getState().setStatus('idle');
+          store.setStatus('idle');
           break;
         case 'STEP':
-          useExecutionStore.getState().addStep(event.state);
+          store.addStep(event.state);
           break;
         case 'OUTPUT':
-          useExecutionStore.getState().appendOutput(event.value);
+          store.appendOutput(event.value);
           term?.write(event.value.replace(/\n/g, '\r\n'));
           break;
         case 'INPUT_REQUEST':
-          useExecutionStore.getState().setInputRequest({ prompt: event.prompt });
-          useExecutionStore.getState().setStatus('paused_on_input');
+          store.setInputRequest({ prompt: event.prompt });
+          store.setStatus('paused_on_input');
           term?.setInputMode(true);
           break;
         case 'DONE':
-          useExecutionStore.getState().setStatus('done');
+          store.setStatus('done');
           break;
         case 'ERROR':
-          useExecutionStore.getState().setError(event.message);
-          useExecutionStore.getState().setStatus('error');
+          store.setError(event.message);
+          store.setStatus('error');
           term?.write(`\r\n\x1b[31m${event.message}\x1b[0m\r\n`);
           break;
       }
     };
   }, []);
 
+  // Recreate the engine when the language changes (Python <-> server).
   useEffect(() => {
-    let engine: VisualizerEngine;
+    const language = engineLanguageFor(selectedLanguage);
+    let engine: Engine;
     try {
-      engine = new VisualizerEngine();
+      engine = createEngine({ language, apiBase: API_BASE });
     } catch (err) {
+      const store = useExecutionStore.getState();
       store.setStatus('error');
       store.setError(err instanceof Error ? err.message : String(err));
       return;
@@ -60,8 +78,7 @@ export function useEngine() {
       engine.dispose();
       engineRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [selectedLanguage, buildHandlers]);
 
   const registerTerminal = useCallback((h: XTermHandle) => {
     termRef.current = h;
@@ -70,19 +87,21 @@ export function useEngine() {
   const run = useCallback((code: string) => {
     const engine = engineRef.current;
     if (!engine) return;
+    const store = useExecutionStore.getState();
     store.reset();
     termRef.current?.clear();
     store.setStatus('running');
-    engine.run(code);
-  }, [store]);
+    void engine.run(code);
+  }, []);
 
   const provideInput = useCallback((value: string) => {
     const engine = engineRef.current;
     if (!engine) return;
+    const store = useExecutionStore.getState();
     store.setInputRequest(null);
     store.setStatus('running');
-    engine.provideInput(value);
-  }, [store]);
+    void engine.provideInput(value);
+  }, []);
 
   const stop = useCallback(() => {
     const engine = engineRef.current;
@@ -90,20 +109,23 @@ export function useEngine() {
 
     engine.dispose();
     engineRef.current = null;
+    const store = useExecutionStore.getState();
     store.reset();
     store.setStatus('initializing');
     termRef.current?.clear();
 
+    const language = engineLanguageFor(useLanguageStore.getState().selectedLanguage);
     try {
-      const fresh = new VisualizerEngine();
+      const fresh = createEngine({ language, apiBase: API_BASE });
       buildHandlers(fresh);
       engineRef.current = fresh;
       fresh.initialize();
     } catch (err) {
-      store.setStatus('error');
-      store.setError(err instanceof Error ? err.message : String(err));
+      const errStore = useExecutionStore.getState();
+      errStore.setStatus('error');
+      errStore.setError(err instanceof Error ? err.message : String(err));
     }
-  }, [store, buildHandlers]);
+  }, [buildHandlers]);
 
   return { run, provideInput, stop, registerTerminal };
 }

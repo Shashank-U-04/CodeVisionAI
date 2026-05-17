@@ -4,13 +4,13 @@ import { FadeInSection } from './FeaturesSection';
 
 export function HowItWorksSection() {
   const steps = [
-    { num: '01', title: 'Write Python', desc: 'Use the built-in editor with syntax highlighting. Paste your own code or pick from examples.', color: 'var(--cv-primary)' },
-    { num: '02', title: 'Run & Step', desc: 'Execute your code in the browser with Pyodide. Step forward and backward through every line.', color: 'var(--cv-secondary)' },
+    { num: '01', title: 'Choose & Write Code', desc: 'Choose from Python, C, C++, or Java. Use the built-in editor with full syntax highlighting.', color: 'var(--cv-primary)' },
+    { num: '02', title: 'Run & Step', desc: 'Execute Python code in the browser with Pyodide. Step forward and backward through every execution step.', color: 'var(--cv-secondary)' },
     { num: '03', title: 'Understand', desc: 'See the call stack, heap objects, and references update in real time. Variables come alive.', color: '#A855F7' },
   ];
 
   return (
-    <section style={{ padding: '80px 32px', background: 'var(--cv-bg)' }}>
+    <section id="how-it-works" style={{ padding: '80px 32px', background: 'var(--cv-bg)' }}>
       <div style={{ maxWidth: 1200, margin: '0 auto' }}>
         <FadeInSection>
           <div style={{ textAlign: 'center', marginBottom: 56 }}>

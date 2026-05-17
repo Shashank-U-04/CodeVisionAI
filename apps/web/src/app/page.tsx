@@ -2,7 +2,7 @@
 
 import { useEffect } from 'react';
 import { useThemeStore } from '@/stores/themeStore';
-import { Nav } from '@/components/landing/Nav';
+import { SiteNav } from '@/components/site/SiteNav';
 import { HeroSection } from '@/components/landing/HeroSection';
 import { FeaturesSection } from '@/components/landing/FeaturesSection';
 import { HowItWorksSection } from '@/components/landing/HowItWorksSection';
@@ -20,14 +20,23 @@ export default function LandingPage() {
   }, [theme]);
 
   return (
-    <div style={{ background: 'var(--cv-bg)', color: 'var(--cv-text)', fontFamily: 'var(--cv-font)', overflowX: 'hidden' }}>
-      <Nav activePage="home" />
-      <HeroSection />
-      <FeaturesSection />
-      <HowItWorksSection />
-      <StatsBar />
-      <TestimonialsSection />
-      <CTASection />
+    <div
+      style={{
+        background: 'var(--cv-bg)',
+        color: 'var(--cv-text)',
+        fontFamily: 'var(--cv-font)',
+        overflowX: 'hidden',
+      }}
+    >
+      <SiteNav transparent />
+      <main id="main">
+        <HeroSection />
+        <FeaturesSection />
+        <HowItWorksSection />
+        <StatsBar />
+        <TestimonialsSection />
+        <CTASection />
+      </main>
       <LandingFooter />
     </div>
   );

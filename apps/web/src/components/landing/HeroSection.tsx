@@ -111,7 +111,7 @@ function HeroPreview() {
           ))}
         </div>
         <div style={{ flex: 1, textAlign: 'center', fontSize: 12, color: 'var(--cv-text-faint)', fontFamily: 'var(--cv-font)' }}>
-          CodeVision AI — Python Visualizer
+          CodeVision AI — Multi-Language Visualizer
         </div>
       </div>
 
@@ -344,12 +344,33 @@ export function HeroSection() {
             maxWidth: 580, margin: '0 auto 36px', lineHeight: 1.7,
             fontFamily: 'var(--cv-font)',
           }}>
-            Step through Python execution line by line. Watch variables form, stacks grow, and heap objects link — all in real time.
+            Step through <strong style={{ color: 'var(--cv-text)', fontWeight: 600 }}>Python, C, C++, and Java</strong> execution line by line. Watch variables form, stacks grow, and heap objects link — all in real time.
           </p>
         </FadeIn>
 
-        <FadeIn delay={0.3} style={{ display: 'flex', gap: 14, justifyContent: 'center', marginBottom: 64 }}>
-          <Link href="/app" style={{
+        <FadeIn delay={0.25} style={{ display: 'flex', gap: 10, justifyContent: 'center', marginBottom: 36 }}>
+          {[
+            { label: 'Python', color: '#3776AB', dot: '#FFD343' },
+            { label: 'C', color: '#5C6BC0', dot: '#7986CB' },
+            { label: 'C++', color: '#00599C', dot: '#4FC3F7' },
+            { label: 'Java', color: '#F89820', dot: '#ED8B00' },
+          ].map(({ label, color, dot }) => (
+            <span key={label} style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              padding: '5px 14px', borderRadius: '100px',
+              border: `1.5px solid ${color}30`,
+              background: `${color}10`,
+              fontSize: 13, fontWeight: 600, color,
+              fontFamily: 'var(--cv-font)',
+            }}>
+              <span style={{ width: 7, height: 7, borderRadius: '50%', background: dot, display: 'inline-block' }} />
+              {label}
+            </span>
+          ))}
+        </FadeIn>
+
+        <FadeIn delay={0.35} style={{ display: 'flex', gap: 14, justifyContent: 'center', marginBottom: 64 }}>
+          <Link href="/app?pick=1" style={{
             display: 'inline-flex', alignItems: 'center', gap: 8,
             padding: '14px 28px', borderRadius: 'var(--cv-radius-lg)',
             background: 'var(--cv-primary)', color: 'var(--cv-primary-text)',
@@ -365,22 +386,23 @@ export function HeroSection() {
             </svg>
             Try it Free
           </Link>
-          <button style={{
+          <Link href="/learn" style={{
             display: 'inline-flex', alignItems: 'center', gap: 8,
             padding: '14px 28px', borderRadius: 'var(--cv-radius-lg)',
             background: 'transparent', color: 'var(--cv-text)',
             fontWeight: 600, fontSize: 16,
             border: '1.5px solid var(--cv-border)',
-            fontFamily: 'var(--cv-font)', cursor: 'pointer', transition: 'all 0.2s ease',
+            fontFamily: 'var(--cv-font)', textDecoration: 'none',
+            transition: 'all 0.2s ease',
           }}
             onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--cv-surface-deep)'; e.currentTarget.style.borderColor = 'var(--cv-border-strong)'; }}
             onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'var(--cv-border)'; }}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polygon points="5 3 19 12 5 21 5 3" />
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M4 4h16v12H4z" /><path d="M2 20h20" />
             </svg>
-            Watch Demo
-          </button>
+            Browse Tutorials
+          </Link>
         </FadeIn>
 
         <FadeIn delay={0.4}>
