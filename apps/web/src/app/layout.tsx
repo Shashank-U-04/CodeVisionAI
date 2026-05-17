@@ -13,12 +13,14 @@ const geistSans = localFont({
   src: '../../public/fonts/geist-latin.woff2',
   variable: '--font-geist-sans',
   display: 'swap',
+  preload: false,
 });
 
 const geistMono = localFont({
   src: '../../public/fonts/geist-mono-latin.woff2',
   variable: '--font-geist-mono',
   display: 'swap',
+  preload: false,
 });
 
 export const metadata: Metadata = {
