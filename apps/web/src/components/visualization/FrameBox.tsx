@@ -13,7 +13,7 @@ interface Props {
 export function FrameBox({ frame, frameIndex, isActive, changedSet }: Props) {
   const headerLabel = frame.isGlobal ? 'Global Frame' : `${frame.name}()`;
   const localEntries = Object.entries(frame.locals);
-  const hasReturn = frame.returnValue !== undefined;
+  const hasReturn = frame.returnValue !== undefined && frame.returnValue !== null;
 
   return (
     <div
