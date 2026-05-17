@@ -34,6 +34,7 @@ Thumbs.db
 # Claude Code — agent worktrees & project cache (not source code)
 .claude/worktrees/
 .claude/projects/
+.claude/SESSION_STATE.md
 
 # Design bundle exports (temporary)
 design-bundle/
