@@ -1,5 +1,6 @@
-fastapi
-uvicorn
+fastapi>=0.115
+uvicorn[standard]>=0.31
+pydantic>=2.11
+sse-starlette>=3.0
 sqlalchemy
-pydantic
 alembic
