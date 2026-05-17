@@ -1,11 +1,16 @@
 export { VisualizerEngine } from './engine';
+export { RemoteEngine, type RemoteLanguage, type RemoteEngineOptions } from './remote-engine';
+export {
+  createEngine,
+  type Engine,
+  type EngineLanguage,
+  type CreateEngineOptions,
+} from './factory';
 export type {
-  // Stack values
   PrimitiveType,
   PrimitiveValue,
   RefValue,
   StackValue,
-  // Heap objects
   ListObject,
   TupleObject,
   DictObject,
@@ -14,11 +19,9 @@ export type {
   ClassObject,
   InstanceObject,
   HeapObject,
-  // Frames + state
   StackFrame,
   TraceEvent,
   ExecutionState,
-  // Engine
   EngineStatus,
   EngineEvent,
 } from './types';
