@@ -93,6 +93,7 @@ async def _stream_events(req: ExecuteRequest, session_id: str) -> AsyncIterator[
             req.code,
             step_budget=req.options.step_budget,
             stdin=req.stdin,
+            session_id=session_id,
         ):
             yield event
         return

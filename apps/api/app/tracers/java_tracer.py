@@ -1,25 +1,29 @@
 """
 Java tracer driver.
 
-Lazily compiles `apps/api/app/tracers/java/JdiTracer.java` into a cached
-`.build/` directory, then for each request:
+Lazily compiles `apps/api/app/tracers/java/*.java` into a cached `.build/`
+directory, then for each request:
 
   1. Compiles the user-supplied source as `Main.java` in a tmp workdir.
   2. Spawns `java -cp <tracer-build> com.codevisionai.tracer.JdiTracer
-     Main <workdir>` — the tracer in turn uses JDI's LaunchingConnector to
-     launch a child JVM that actually runs the user code.
-  3. Reads NDJSON `EngineEvent` lines from the tracer's stdout and re-emits
+     Main <workdir> <step-budget>` — the tracer in turn uses JDI's
+     LaunchingConnector to launch a child JVM via MainLauncher (which
+     installs CvaiInputStream as System.in) that actually runs the user
+     code.
+  3. Reads NDJSON EngineEvent lines from the tracer's stdout and re-emits
      them as Pydantic events, exactly matching the wire format the C/C++
      tracer and the in-browser Pyodide engine produce.
-
-Commit 1 (skeleton): only READY, OUTPUT, ERROR, DONE flow end-to-end. STEP
-events arrive in commit 2 once the JDI side wires up `StepRequest`.
+  4. Pre-supplied stdin is written immediately to the JdiTracer pipe and
+     relayed to the target JVM. When the target asks for more input,
+     CvaiInputStream prints a sentinel to stderr; JdiTracer turns that
+     into an INPUT_REQUEST event, which this driver re-emits with the
+     real session_id and blocks on `bus.wait_for_input` until the
+     frontend POSTs to /execute/input/{sid}.
 """
 from __future__ import annotations
 
 import asyncio
 import json
-import os
 import shutil
 import subprocess
 import tempfile
@@ -29,10 +33,12 @@ from typing import AsyncIterator
 
 from pydantic import ValidationError
 
+from ..core.session_bus import bus
 from ..schemas.execution import (
     EngineEvent,
     EventDone,
     EventError,
+    EventInputRequest,
     EventOutput,
     EventReady,
     EventStep,
@@ -59,12 +65,14 @@ _STDERR_TAIL_CHARS = 500
 def _is_tracer_stale() -> bool:
     if not _TRACER_CLASS_FILE.exists():
         return True
-    return _TRACER_CLASS_FILE.stat().st_mtime < _TRACER_SRC.stat().st_mtime
+    newest_src = max((p.stat().st_mtime for p in _TRACER_DIR.glob("*.java")), default=0)
+    return _TRACER_CLASS_FILE.stat().st_mtime < newest_src
 
 
 def _compile_tracer() -> str | None:
     _TRACER_BUILD.mkdir(parents=True, exist_ok=True)
-    cmd = ["javac", "-d", str(_TRACER_BUILD), str(_TRACER_SRC)]
+    sources = sorted(str(p) for p in _TRACER_DIR.glob("*.java"))
+    cmd = ["javac", "-d", str(_TRACER_BUILD), *sources]
     cc = subprocess.run(cmd, capture_output=True, text=True, timeout=COMPILE_TIMEOUT_S)
     if cc.returncode != 0:
         return (cc.stderr or cc.stdout).strip() or "Tracer compilation failed"
@@ -103,6 +111,9 @@ def _parse_ndjson_event(line: str) -> EngineEvent | None:
             return EventError(message=obj.get("message", "unknown"), line=obj.get("line"))
         if kind == "STEP":
             return EventStep.model_validate(obj)
+        if kind == "INPUT_REQUEST":
+            # session_id is patched in by the Python driver before re-emit.
+            return EventInputRequest(prompt=obj.get("prompt", ""), sessionId=obj.get("sessionId", ""))
     except ValidationError:
         return None
     return None
@@ -129,6 +140,7 @@ async def stream_java_execution(
     *,
     step_budget: int = DEFAULT_STEP_BUDGET,
     stdin: str = "",
+    session_id: str = "",
 ) -> AsyncIterator[EngineEvent]:
     workdir = Path(tempfile.mkdtemp(prefix="cvai_java_"))
     started_at = time.monotonic()
@@ -148,11 +160,6 @@ async def stream_java_execution(
             yield EventDone()
             return
 
-        # stdin is supplied via a file path because Java argv parsing on
-        # Windows mangles embedded newlines and tabs.
-        stdin_path = workdir / "stdin.txt"
-        stdin_path.write_text(stdin, encoding="utf-8")
-
         cmd = [
             "java",
             "-cp",
@@ -161,14 +168,25 @@ async def stream_java_execution(
             "Main",
             str(workdir),
             str(step_budget),
-            str(stdin_path),
         ]
         proc = await asyncio.create_subprocess_exec(
             *cmd,
+            stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         assert proc.stdout is not None
+        assert proc.stdin is not None
+
+        # Pre-supplied stdin is written immediately; CvaiInputStream serves
+        # from this buffer first and only fires INPUT_REQUEST once it's
+        # drained.
+        if stdin:
+            proc.stdin.write(stdin.encode("utf-8"))
+            try:
+                await proc.stdin.drain()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
 
         saw_done = False
         while True:
@@ -183,6 +201,24 @@ async def stream_java_execution(
             event = _parse_ndjson_event(line.decode("utf-8", errors="replace"))
             if event is None:
                 continue
+
+            if isinstance(event, EventInputRequest):
+                yield EventInputRequest(prompt=event.prompt, sessionId=session_id)
+                try:
+                    value = await bus.wait_for_input(session_id, timeout=60.0)
+                except (asyncio.TimeoutError, KeyError):
+                    yield EventError(message="Input request timed out")
+                    break
+                if not value.endswith("\n"):
+                    value += "\n"
+                try:
+                    proc.stdin.write(value.encode("utf-8"))
+                    await proc.stdin.drain()
+                except (BrokenPipeError, ConnectionResetError):
+                    yield EventError(message="Target JVM closed stdin before input arrived")
+                    break
+                continue
+
             yield event
             if isinstance(event, EventDone):
                 saw_done = True
@@ -203,5 +239,12 @@ async def stream_java_execution(
         yield EventDone()
     finally:
         if proc is not None:
+            # Closing stdin lets the JdiTracer relay thread exit and the
+            # target JVM see EOF on its System.in if it was still reading.
+            if proc.stdin is not None and not proc.stdin.is_closing():
+                try:
+                    proc.stdin.close()
+                except (BrokenPipeError, ConnectionResetError, RuntimeError):
+                    pass
             await _terminate_proc(proc)
         shutil.rmtree(workdir, ignore_errors=True)

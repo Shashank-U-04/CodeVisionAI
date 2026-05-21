@@ -43,9 +43,6 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -73,14 +70,13 @@ public final class JdiTracer {
 
     public static void main(String[] rawArgs) {
         if (rawArgs.length < 2) {
-            emitError("Usage: JdiTracer <target-main-class> <target-classpath> [<step-budget>] [<stdin-file>]");
+            emitError("Usage: JdiTracer <target-main-class> <target-classpath> [<step-budget>]");
             emitDone();
             return;
         }
         final String targetMain = rawArgs[0];
         final String targetClasspath = rawArgs[1];
         final int stepBudget = parseBudget(rawArgs.length >= 3 ? rawArgs[2] : null);
-        final String stdinFile = rawArgs.length >= 4 ? rawArgs[3] : null;
 
         VirtualMachine vm;
         try {
@@ -91,10 +87,13 @@ public final class JdiTracer {
             return;
         }
 
-        feedStdin(vm, stdinFile);
+        // Relay this JVM's stdin into the target JVM's stdin so the Python
+        // driver can deliver pre-supplied AND interactive input through a
+        // single pipe. The relay thread is daemon so it terminates with us.
+        Thread inputRelay = startInputRelay(vm.process().getOutputStream());
 
         Thread outForwarder = startStreamForwarder(vm.process().getInputStream(), false);
-        Thread errForwarder = startStreamForwarder(vm.process().getErrorStream(), true);
+        Thread errForwarder = startStreamForwarderFilter(vm.process().getErrorStream());
 
         EventRequestManager mgr = vm.eventRequestManager();
         ClassPrepareRequest cpr = mgr.createClassPrepareRequest();
@@ -174,8 +173,14 @@ public final class JdiTracer {
         if (args.containsKey("quote")) {
             args.get("quote").setValue("\"");
         }
-        args.get("main").setValue(mainClass);
-        args.get("options").setValue("-cp \"" + classpath + "\"");
+        // Hand the target JVM to MainLauncher (our bootstrap that installs
+        // CvaiInputStream) instead of running the user's class directly.
+        // The bootstrap then reflects into the user's main with no args.
+        args.get("main").setValue(MainLauncher.class.getName() + " " + mainClass);
+        String tracerCp = System.getProperty("java.class.path", "");
+        String combinedCp = classpath
+                + (tracerCp.isEmpty() ? "" : (java.io.File.pathSeparator + tracerCp));
+        args.get("options").setValue("-cp \"" + combinedCp + "\"");
         if (args.containsKey("suspend")) {
             args.get("suspend").setValue("true");
         }
@@ -190,28 +195,59 @@ public final class JdiTracer {
     }
 
     /**
-     * Pipe a canned stdin payload to the launched JVM's process stdin and
-     * close it. EOF makes Scanner.hasNext() return false cleanly instead of
-     * blocking forever; for truly interactive input we'll layer an
-     * INPUT_REQUEST handshake on top in a later commit.
+     * Relay this tracer JVM's stdin straight into the target JVM's stdin.
+     * Python's java_tracer writes both pre-supplied input and interactive
+     * INPUT_REQUEST responses to our stdin; we just forward bytes through.
+     * Closing the target's stdin when our stdin closes signals EOF cleanly.
      */
-    private static void feedStdin(VirtualMachine vm, String stdinFile) {
-        if (stdinFile == null || stdinFile.isEmpty()) {
-            return;
-        }
-        Path p = Paths.get(stdinFile);
-        if (!Files.exists(p)) {
-            return;
-        }
-        try (OutputStream stdin = vm.process().getOutputStream()) {
-            byte[] payload = Files.readAllBytes(p);
-            if (payload.length > 0) {
-                stdin.write(payload);
-                stdin.flush();
+    private static Thread startInputRelay(OutputStream targetStdin) {
+        Thread t = new Thread(() -> {
+            byte[] buf = new byte[4096];
+            try {
+                int n;
+                while ((n = System.in.read(buf)) > 0) {
+                    targetStdin.write(buf, 0, n);
+                    targetStdin.flush();
+                }
+            } catch (IOException ignored) {
+                // Target process closed stdin; nothing we can do.
+            } finally {
+                try {
+                    targetStdin.close();
+                } catch (IOException ignored) {
+                    // already closed
+                }
             }
-        } catch (IOException ignored) {
-            // Target may have already exited or closed stdin; not fatal.
-        }
+        }, "stdin-relay");
+        t.setDaemon(true);
+        t.start();
+        return t;
+    }
+
+    /**
+     * Forward the target JVM's stderr, but watch for the
+     * {@link CvaiInputStream#SENTINEL} marker. When the marker appears on
+     * its own line, emit an INPUT_REQUEST EngineEvent instead of forwarding
+     * those bytes as OUTPUT — so users never see the sentinel in the UI.
+     */
+    private static Thread startStreamForwarderFilter(InputStream in) {
+        Thread t = new Thread(() -> {
+            try (BufferedReader r = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = r.readLine()) != null) {
+                    if (CvaiInputStream.SENTINEL.equals(line)) {
+                        emitInputRequest();
+                        continue;
+                    }
+                    emitOutput(line + "\n");
+                }
+            } catch (IOException ignored) {
+                // stream closed
+            }
+        }, "target-stderr");
+        t.setDaemon(true);
+        t.start();
+        return t;
     }
 
     private static int parseBudget(String raw) {
@@ -481,6 +517,11 @@ public final class JdiTracer {
 
     private static void emitOutput(String value) {
         emit("{\"type\":\"OUTPUT\",\"value\":" + jsonString(value) + "}");
+    }
+
+    /** sessionId is filled in by the Python driver before re-emitting. */
+    private static void emitInputRequest() {
+        emit("{\"type\":\"INPUT_REQUEST\",\"prompt\":\"\",\"sessionId\":\"\"}");
     }
 
     private static String jsonString(String s) {
