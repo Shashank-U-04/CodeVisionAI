@@ -29,6 +29,7 @@ from ..schemas.execution import (
     event_to_json,
 )
 from ..schemas.requests import ExecuteRequest, InputRequest
+from ..tracers.java_tracer import stream_java_execution
 from ..tracers.native_tracer import stream_native_execution
 
 router = APIRouter(prefix="/api/v1/execute", tags=["execution"])
@@ -81,6 +82,14 @@ async def _stream_events(req: ExecuteRequest, session_id: str) -> AsyncIterator[
         async for event in stream_native_execution(
             req.code,
             language=req.language,
+            step_budget=req.options.step_budget,
+        ):
+            yield event
+        return
+
+    if req.language == "java":
+        async for event in stream_java_execution(
+            req.code,
             step_budget=req.options.step_budget,
         ):
             yield event
