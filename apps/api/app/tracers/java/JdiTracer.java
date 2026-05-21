@@ -40,8 +40,12 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -69,13 +73,14 @@ public final class JdiTracer {
 
     public static void main(String[] rawArgs) {
         if (rawArgs.length < 2) {
-            emitError("Usage: JdiTracer <target-main-class> <target-classpath> [<step-budget>]");
+            emitError("Usage: JdiTracer <target-main-class> <target-classpath> [<step-budget>] [<stdin-file>]");
             emitDone();
             return;
         }
         final String targetMain = rawArgs[0];
         final String targetClasspath = rawArgs[1];
         final int stepBudget = parseBudget(rawArgs.length >= 3 ? rawArgs[2] : null);
+        final String stdinFile = rawArgs.length >= 4 ? rawArgs[3] : null;
 
         VirtualMachine vm;
         try {
@@ -85,6 +90,8 @@ public final class JdiTracer {
             emitDone();
             return;
         }
+
+        feedStdin(vm, stdinFile);
 
         Thread outForwarder = startStreamForwarder(vm.process().getInputStream(), false);
         Thread errForwarder = startStreamForwarder(vm.process().getErrorStream(), true);
@@ -180,6 +187,31 @@ public final class JdiTracer {
         sr.addClassFilter(classFilter);
         sr.setSuspendPolicy(EventRequest.SUSPEND_EVENT_THREAD);
         sr.enable();
+    }
+
+    /**
+     * Pipe a canned stdin payload to the launched JVM's process stdin and
+     * close it. EOF makes Scanner.hasNext() return false cleanly instead of
+     * blocking forever; for truly interactive input we'll layer an
+     * INPUT_REQUEST handshake on top in a later commit.
+     */
+    private static void feedStdin(VirtualMachine vm, String stdinFile) {
+        if (stdinFile == null || stdinFile.isEmpty()) {
+            return;
+        }
+        Path p = Paths.get(stdinFile);
+        if (!Files.exists(p)) {
+            return;
+        }
+        try (OutputStream stdin = vm.process().getOutputStream()) {
+            byte[] payload = Files.readAllBytes(p);
+            if (payload.length > 0) {
+                stdin.write(payload);
+                stdin.flush();
+            }
+        } catch (IOException ignored) {
+            // Target may have already exited or closed stdin; not fatal.
+        }
     }
 
     private static int parseBudget(String raw) {

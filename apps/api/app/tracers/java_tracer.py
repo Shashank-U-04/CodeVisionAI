@@ -128,6 +128,7 @@ async def stream_java_execution(
     code: str,
     *,
     step_budget: int = DEFAULT_STEP_BUDGET,
+    stdin: str = "",
 ) -> AsyncIterator[EngineEvent]:
     workdir = Path(tempfile.mkdtemp(prefix="cvai_java_"))
     started_at = time.monotonic()
@@ -147,6 +148,11 @@ async def stream_java_execution(
             yield EventDone()
             return
 
+        # stdin is supplied via a file path because Java argv parsing on
+        # Windows mangles embedded newlines and tabs.
+        stdin_path = workdir / "stdin.txt"
+        stdin_path.write_text(stdin, encoding="utf-8")
+
         cmd = [
             "java",
             "-cp",
@@ -155,6 +161,7 @@ async def stream_java_execution(
             "Main",
             str(workdir),
             str(step_budget),
+            str(stdin_path),
         ]
         proc = await asyncio.create_subprocess_exec(
             *cmd,

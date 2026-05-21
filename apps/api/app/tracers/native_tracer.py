@@ -73,17 +73,41 @@ CPP_SPEC = LangSpec(
 _SPECS: dict[NativeLanguage, LangSpec] = {"c": C_SPEC, "cpp": CPP_SPEC}
 
 
-# Prologue injected before user code: redirects stdout/stderr to a file we
-# can tail, then `#line 1 "<virtual>"` so GDB reports user lines starting
-# at 1 in our virtual filename (used by the frame-filter).
+# Prologue injected before user code:
+#   - freopen stdout/stderr to a file the Python side tails for OUTPUT events
+#   - dup2 fd 0 from a file we pre-fill with the request's stdin so scanf
+#     and std::cin both read it (freopen on stdin does NOT make C++ cin see
+#     the new file under MinGW + libstdc++; cin's stdio_filebuf is bound to
+#     the OS file handle before the constructor priority chain can intervene,
+#     while dup2 swaps the underlying fd 0 directly and so is opaque to it)
+#   - `#line 1 "<virtual>"` so GDB reports user lines starting at 1
 _PROLOGUE_TEMPLATE = """\
 #include <stdio.h>
 #include <stdlib.h>
-__attribute__((constructor)) static void __cvai_redirect(void) {{
+#include <fcntl.h>
+#ifdef _WIN32
+#include <io.h>
+#define __CVAI_OPEN _open
+#define __CVAI_DUP2 _dup2
+#define __CVAI_CLOSE _close
+#define __CVAI_O_RDONLY _O_RDONLY
+#else
+#include <unistd.h>
+#define __CVAI_OPEN open
+#define __CVAI_DUP2 dup2
+#define __CVAI_CLOSE close
+#define __CVAI_O_RDONLY O_RDONLY
+#endif
+__attribute__((constructor(101))) static void __cvai_redirect(void) {{
     freopen("{out_file}", "w", stdout);
     freopen("{out_file}", "a", stderr);
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
+    int __cvai_in_fd = __CVAI_OPEN("{in_file}", __CVAI_O_RDONLY);
+    if (__cvai_in_fd >= 0) {{
+        __CVAI_DUP2(__cvai_in_fd, 0);
+        __CVAI_CLOSE(__cvai_in_fd);
+    }}
 }}
 #line 1 "{virtual}"
 """
@@ -158,14 +182,19 @@ def _is_user_func(func: str | None) -> bool:
 # ─── compile ──────────────────────────────────────────────────────────────
 
 
-def _compile(workdir: str, code: str, spec: LangSpec) -> tuple[str, str | None]:
+def _compile(workdir: str, code: str, stdin: str, spec: LangSpec) -> tuple[str, str, str | None]:
     out_file = os.path.join(workdir, "stdout.txt")
+    in_file = os.path.join(workdir, "stdin.txt")
     src_path = os.path.join(workdir, f"main.{spec.file_ext}")
     exe_path = os.path.join(workdir, "main.exe")
+
+    with open(in_file, "w", encoding="utf-8", newline="") as f:
+        f.write(stdin)
 
     with open(src_path, "w", encoding="utf-8") as f:
         f.write(_PROLOGUE_TEMPLATE.format(
             out_file=_to_gdb_path(out_file),
+            in_file=_to_gdb_path(in_file),
             virtual=spec.virtual_source,
         ))
         f.write(code)
@@ -183,8 +212,8 @@ def _compile(workdir: str, code: str, spec: LangSpec) -> tuple[str, str | None]:
     ]
     cc = subprocess.run(cmd, capture_output=True, text=True, timeout=COMPILE_TIMEOUT_S)
     if cc.returncode != 0:
-        return exe_path, cc.stderr.strip() or "Compilation failed"
-    return exe_path, None
+        return exe_path, in_file, cc.stderr.strip() or "Compilation failed"
+    return exe_path, in_file, None
 
 
 # ─── state extraction ─────────────────────────────────────────────────────
@@ -297,6 +326,7 @@ async def stream_native_execution(
     *,
     language: NativeLanguage,
     step_budget: int = DEFAULT_STEP_BUDGET,
+    stdin: str = "",
 ) -> AsyncIterator[EngineEvent]:
     spec = _SPECS[language]
     workdir = tempfile.mkdtemp(prefix=spec.tmpdir_prefix)
@@ -308,7 +338,7 @@ async def stream_native_execution(
         return EventError(message=message)
 
     try:
-        exe_path, compile_err = await asyncio.to_thread(_compile, workdir, code, spec)
+        exe_path, in_path, compile_err = await asyncio.to_thread(_compile, workdir, code, stdin, spec)
         if compile_err:
             yield _bail(compile_err)
             yield EventDone()
@@ -374,20 +404,30 @@ async def stream_native_execution(
 
             prev_frames = frames
 
-            step_result = await asyncio.to_thread(_w, "-exec-step")
+            # -exec-next steps over function calls instead of into them.
+            # That gives up stepping into user-defined helpers but is the
+            # only reliable way to traverse iostream-heavy C++ on Windows
+            # MinGW; -exec-step lands in libstdc++ TUs that have no source
+            # information, and -exec-finish from there frequently bounces
+            # out past main entirely.
+            step_result = await asyncio.to_thread(_w, "-exec-next")
             reason = _last_stop_reason(step_result)
 
-            for _ in range(6):
+            for _ in range(12):
                 if reason in _EXIT_REASONS or _program_exited(step_result):
                     break
-                stopped_frame = _last_stopped_frame(step_result) or {}
+                stopped_frame = _last_stopped_frame(step_result)
+                if stopped_frame is None:
+                    # No *stopped record at all → program actually exited.
+                    reason = "exited"
+                    break
                 stopped_file = stopped_frame.get("file") or ""
                 stopped_func = stopped_frame.get("func")
                 if _is_user_file(stopped_file, spec) and _is_user_func(stopped_func):
                     break
-                if not stopped_file:
-                    reason = "exited"
-                    break
+                # In system / library code (libstdc++, CRT). `file` may be
+                # absent entirely when there's no debug info. Step out and
+                # try again.
                 step_result = await asyncio.to_thread(_w, "-exec-finish")
                 reason = _last_stop_reason(step_result)
 
@@ -426,11 +466,19 @@ async def stream_native_execution(
 
 
 # Backwards-compatible shims so route imports keep working.
-async def stream_c_execution(code: str, *, step_budget: int = DEFAULT_STEP_BUDGET) -> AsyncIterator[EngineEvent]:
-    async for event in stream_native_execution(code, language="c", step_budget=step_budget):
+async def stream_c_execution(
+    code: str, *, step_budget: int = DEFAULT_STEP_BUDGET, stdin: str = ""
+) -> AsyncIterator[EngineEvent]:
+    async for event in stream_native_execution(
+        code, language="c", step_budget=step_budget, stdin=stdin
+    ):
         yield event
 
 
-async def stream_cpp_execution(code: str, *, step_budget: int = DEFAULT_STEP_BUDGET) -> AsyncIterator[EngineEvent]:
-    async for event in stream_native_execution(code, language="cpp", step_budget=step_budget):
+async def stream_cpp_execution(
+    code: str, *, step_budget: int = DEFAULT_STEP_BUDGET, stdin: str = ""
+) -> AsyncIterator[EngineEvent]:
+    async for event in stream_native_execution(
+        code, language="cpp", step_budget=step_budget, stdin=stdin
+    ):
         yield event
