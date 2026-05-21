@@ -223,9 +223,10 @@ def _frames_from_gdb(gdb: GdbController, spec: LangSpec) -> tuple[list[StackFram
     stack_rec = _result_payload(gdb.write("-stack-list-frames", timeout_sec=GDB_CMD_TIMEOUT_S))
     raw_frames = (stack_rec or {}).get("stack") or []
 
+    # Any frame at a user source file counts as user code, even if its
+    # immediate function is a GCC-emitted thunk like `_fu0___ZSt3cin`.
     in_user_code = any(
         _is_user_file((raw.get("frame", raw) if isinstance(raw, dict) else {}).get("file") or "", spec)
-        and _is_user_func((raw.get("frame", raw) if isinstance(raw, dict) else {}).get("func"))
         for raw in raw_frames
     )
 
@@ -238,7 +239,12 @@ def _frames_from_gdb(gdb: GdbController, spec: LangSpec) -> tuple[list[StackFram
         except ValueError:
             level = 0
 
-        func = frame.get("func") or "??"
+        raw_func = frame.get("func") or "??"
+        # `_fu0___ZSt3cin` and friends are GCC's one-time-init thunks for
+        # global symbol access. They show up in the frame stack with the
+        # USER source file/line, so we keep the line but rename the function
+        # to something a learner can recognize.
+        func = "main" if raw_func.startswith("_fu0_") else raw_func
         line_raw = frame.get("line")
         try:
             line = int(line_raw) if line_raw is not None else 0
@@ -423,7 +429,13 @@ async def stream_native_execution(
                     break
                 stopped_file = stopped_frame.get("file") or ""
                 stopped_func = stopped_frame.get("func")
-                if _is_user_file(stopped_file, spec) and _is_user_func(stopped_func):
+                # The file check is authoritative: if GDB reports a user
+                # source file we're at a user source line, even if the
+                # immediate function is a compiler-generated thunk such as
+                # `_fu0___ZSt3cin` (GCC's one-time-init wrapper for global
+                # references like std::cin). Filtering those out with
+                # -exec-finish from main is what's bouncing us past return.
+                if _is_user_file(stopped_file, spec):
                     break
                 # In system / library code (libstdc++, CRT). `file` may be
                 # absent entirely when there's no debug info. Step out and
