@@ -6,6 +6,13 @@ config — compiler binary, file extension, language standard, virtual
 source name reported in #line directives, etc. Behaviour is otherwise
 identical: compile with debug info, drive gdb via pygdbmi, step line
 by line, yield `EngineEvent`s on the same wire format Pyodide emits.
+
+Stdin is fed through a `StdinChannel` (Windows named pipe / POSIX FIFO)
+that the prologue dup2s onto fd 0. That lets `scanf`/`cin >> x` *block*
+on read when there is no data — the driver treats a missing `*stopped`
+event after `-exec-next` as "blocked on stdin" and emits INPUT_REQUEST,
+waits on the session bus for the frontend's reply, and writes the bytes
+back into the channel.
 """
 from __future__ import annotations
 
@@ -20,22 +27,34 @@ from typing import AsyncIterator, Literal
 
 from pygdbmi.gdbcontroller import GdbController
 
+from ..core.session_bus import bus
 from ..schemas.execution import (
     EngineEvent,
     EventDone,
     EventError,
+    EventInputRequest,
     EventOutput,
     EventReady,
     EventStep,
     ExecutionState,
     StackFrame,
 )
+from .stdin_channel import StdinChannel, stdin_path_as_c_literal
 from .value_parse import parse_value
 
 DEFAULT_STEP_BUDGET = 2000
 DEFAULT_TIMEOUT_S = 120.0
 GDB_CMD_TIMEOUT_S = 5.0
 COMPILE_TIMEOUT_S = 15.0
+# How long we wait for a *stopped event after -exec-next before deciding
+# the inferior is blocked on stdin. Educational programs step in
+# microseconds, so 400ms is generous for "should have finished by now".
+STOP_POLL_INTERVAL_S = 0.05
+STOP_POLL_BLOCKED_S = 0.4
+# Once we've sent input, give the inferior longer to consume + complete
+# the step before we conclude it's still blocked and need to prompt again.
+STOP_POLL_POST_INPUT_S = 1.5
+INPUT_WAIT_TIMEOUT_S = 60.0
 
 _EXIT_REASONS = {"exited", "exited-normally", "exited-signalled"}
 
@@ -75,11 +94,9 @@ _SPECS: dict[NativeLanguage, LangSpec] = {"c": C_SPEC, "cpp": CPP_SPEC}
 
 # Prologue injected before user code:
 #   - freopen stdout/stderr to a file the Python side tails for OUTPUT events
-#   - dup2 fd 0 from a file we pre-fill with the request's stdin so scanf
-#     and std::cin both read it (freopen on stdin does NOT make C++ cin see
-#     the new file under MinGW + libstdc++; cin's stdio_filebuf is bound to
-#     the OS file handle before the constructor priority chain can intervene,
-#     while dup2 swaps the underlying fd 0 directly and so is opaque to it)
+#   - dup2 fd 0 from a pipe path so scanf and std::cin block on read when the
+#     write side has no data queued. The Python driver writes pre-supplied
+#     bytes immediately and pumps interactive bytes through INPUT_REQUEST.
 #   - `#line 1 "<virtual>"` so GDB reports user lines starting at 1
 _PROLOGUE_TEMPLATE = """\
 #include <stdio.h>
@@ -87,27 +104,39 @@ _PROLOGUE_TEMPLATE = """\
 #include <fcntl.h>
 #ifdef _WIN32
 #include <io.h>
-#define __CVAI_OPEN _open
-#define __CVAI_DUP2 _dup2
-#define __CVAI_CLOSE _close
-#define __CVAI_O_RDONLY _O_RDONLY
+#include <stdint.h>
+#include <windows.h>
 #else
 #include <unistd.h>
-#define __CVAI_OPEN open
-#define __CVAI_DUP2 dup2
-#define __CVAI_CLOSE close
-#define __CVAI_O_RDONLY O_RDONLY
 #endif
 __attribute__((constructor(101))) static void __cvai_redirect(void) {{
     freopen("{out_file}", "w", stdout);
     freopen("{out_file}", "a", stderr);
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
-    int __cvai_in_fd = __CVAI_OPEN("{in_file}", __CVAI_O_RDONLY);
-    if (__cvai_in_fd >= 0) {{
-        __CVAI_DUP2(__cvai_in_fd, 0);
-        __CVAI_CLOSE(__cvai_in_fd);
+#ifdef _WIN32
+    /* Use CreateFile directly so we can open named-pipe paths like
+       \\\\.\\pipe\\cvai_stdin_xxx — msvcrt's _open does not route the
+       \\\\.\\ namespace through CreateFile properly. _open_osfhandle
+       takes ownership of the HANDLE and lets us dup2 it onto fd 0. */
+    HANDLE __cvai_h = CreateFileA("{in_path}", GENERIC_READ, 0, NULL,
+                                  OPEN_EXISTING, 0, NULL);
+    if (__cvai_h != INVALID_HANDLE_VALUE) {{
+        int __cvai_in_fd = _open_osfhandle((intptr_t)__cvai_h, _O_RDONLY);
+        if (__cvai_in_fd >= 0) {{
+            _dup2(__cvai_in_fd, 0);
+            _close(__cvai_in_fd);
+        }} else {{
+            CloseHandle(__cvai_h);
+        }}
     }}
+#else
+    int __cvai_in_fd = open("{in_path}", O_RDONLY);
+    if (__cvai_in_fd >= 0) {{
+        dup2(__cvai_in_fd, 0);
+        close(__cvai_in_fd);
+    }}
+#endif
 }}
 #line 1 "{virtual}"
 """
@@ -182,19 +211,20 @@ def _is_user_func(func: str | None) -> bool:
 # ─── compile ──────────────────────────────────────────────────────────────
 
 
-def _compile(workdir: str, code: str, stdin: str, spec: LangSpec) -> tuple[str, str, str | None]:
+def _compile(
+    workdir: str,
+    code: str,
+    spec: LangSpec,
+    in_path_c_literal: str,
+) -> tuple[str, str | None]:
     out_file = os.path.join(workdir, "stdout.txt")
-    in_file = os.path.join(workdir, "stdin.txt")
     src_path = os.path.join(workdir, f"main.{spec.file_ext}")
     exe_path = os.path.join(workdir, "main.exe")
-
-    with open(in_file, "w", encoding="utf-8", newline="") as f:
-        f.write(stdin)
 
     with open(src_path, "w", encoding="utf-8") as f:
         f.write(_PROLOGUE_TEMPLATE.format(
             out_file=_to_gdb_path(out_file),
-            in_file=_to_gdb_path(in_file),
+            in_path=in_path_c_literal,
             virtual=spec.virtual_source,
         ))
         f.write(code)
@@ -212,8 +242,8 @@ def _compile(workdir: str, code: str, stdin: str, spec: LangSpec) -> tuple[str, 
     ]
     cc = subprocess.run(cmd, capture_output=True, text=True, timeout=COMPILE_TIMEOUT_S)
     if cc.returncode != 0:
-        return exe_path, in_file, cc.stderr.strip() or "Compilation failed"
-    return exe_path, in_file, None
+        return exe_path, cc.stderr.strip() or "Compilation failed"
+    return exe_path, None
 
 
 # ─── state extraction ─────────────────────────────────────────────────────
@@ -324,6 +354,35 @@ def _diff_changed(prev: list[StackFrame] | None, current: list[StackFrame]) -> l
     return out
 
 
+async def _poll_for_stop(
+    gdb: GdbController,
+    records: list[dict],
+    *,
+    total_wait_s: float,
+    interval_s: float = STOP_POLL_INTERVAL_S,
+) -> tuple[str | None, bool]:
+    """Drain GDB events until *stopped/exit arrives or `total_wait_s` elapses.
+
+    Returns (stop_reason, exited). Both can be falsy if we time out while the
+    inferior is still running (e.g., blocked on stdin).
+    """
+    reason = _last_stop_reason(records)
+    exited = _program_exited(records)
+    if reason is not None or exited:
+        return reason, exited
+
+    deadline = time.monotonic() + total_wait_s
+    while time.monotonic() < deadline:
+        more = await asyncio.to_thread(gdb.get_gdb_response, interval_s, False)
+        if more:
+            records.extend(more)
+            reason = _last_stop_reason(records)
+            exited = _program_exited(records)
+            if reason is not None or exited:
+                return reason, exited
+    return reason, exited
+
+
 # ─── main driver ──────────────────────────────────────────────────────────
 
 
@@ -333,18 +392,27 @@ async def stream_native_execution(
     language: NativeLanguage,
     step_budget: int = DEFAULT_STEP_BUDGET,
     stdin: str = "",
+    session_id: str = "",
 ) -> AsyncIterator[EngineEvent]:
     spec = _SPECS[language]
     workdir = tempfile.mkdtemp(prefix=spec.tmpdir_prefix)
     out_path = os.path.join(workdir, "stdout.txt")
     gdb: GdbController | None = None
+    stdin_channel: StdinChannel | None = None
     started_at = time.monotonic()
+    interactive = bool(session_id)
 
     def _bail(message: str) -> EngineEvent:
         return EventError(message=message)
 
     try:
-        exe_path, in_path, compile_err = await asyncio.to_thread(_compile, workdir, code, stdin, spec)
+        stdin_channel = StdinChannel(workdir)
+        stdin_channel.start()
+
+        in_path_literal = stdin_path_as_c_literal(stdin_channel)
+        exe_path, compile_err = await asyncio.to_thread(
+            _compile, workdir, code, spec, in_path_literal
+        )
         if compile_err:
             yield _bail(compile_err)
             yield EventDone()
@@ -365,6 +433,17 @@ async def stream_native_execution(
         await asyncio.to_thread(_w, "-break-insert main")
         run_result = await asyncio.to_thread(_w, "-exec-run")
 
+        # Pre-supplied stdin gets pushed into the pipe right after the inferior
+        # has had a chance to open it (the prologue runs before main, so by
+        # the time -exec-run's *stopped at main arrives the read end exists).
+        if stdin:
+            try:
+                await stdin_channel.write(stdin.encode("utf-8"))
+            except (BrokenPipeError, OSError, TimeoutError) as exc:
+                yield _bail(f"Failed to deliver pre-supplied stdin: {exc}")
+                yield EventDone()
+                return
+
         # `-exec-run` returns `^running` immediately; the breakpoint-hit
         # `*stopped` arrives later (often noticeably later in C++ due to
         # thread init). Drain follow-up events until we see a stop reason
@@ -376,7 +455,7 @@ async def stream_native_execution(
                     run_result.extend(more)
                     if _last_stop_reason(run_result) is not None:
                         break
-                    if _program_exited(more):
+                    if _program_exited(run_result):
                         break
 
         if _last_stop_reason(run_result) is None and not _program_exited(run_result):
@@ -417,7 +496,53 @@ async def stream_native_execution(
             # information, and -exec-finish from there frequently bounces
             # out past main entirely.
             step_result = await asyncio.to_thread(_w, "-exec-next")
-            reason = _last_stop_reason(step_result)
+            reason, exited = await _poll_for_stop(
+                gdb, step_result, total_wait_s=STOP_POLL_BLOCKED_S
+            )
+
+            # No *stopped yet and program still alive → assume blocked on
+            # stdin. Emit INPUT_REQUEST, deliver bytes, loop until we see
+            # the *stopped or the inferior exits / dies.
+            input_loop_guard = 0
+            while (
+                reason is None
+                and not exited
+                and interactive
+                and input_loop_guard < 32
+            ):
+                input_loop_guard += 1
+
+                # Flush any output (e.g., a `printf("name? ")` printed right
+                # before the read) so the UI shows the prompt.
+                chunk = tail.read_new()
+                if chunk:
+                    yield EventOutput(value=chunk)
+
+                yield EventInputRequest(prompt="", sessionId=session_id)
+                try:
+                    value = await bus.wait_for_input(
+                        session_id, timeout=INPUT_WAIT_TIMEOUT_S
+                    )
+                except (asyncio.TimeoutError, KeyError):
+                    yield _bail("Input request timed out")
+                    reason = "timeout"
+                    break
+
+                if not value.endswith("\n"):
+                    value += "\n"
+                try:
+                    await stdin_channel.write(value.encode("utf-8"))
+                except (BrokenPipeError, OSError, TimeoutError) as exc:
+                    yield _bail(f"Failed to deliver input: {exc}")
+                    reason = "deliver-failed"
+                    break
+
+                reason, exited = await _poll_for_stop(
+                    gdb, step_result, total_wait_s=STOP_POLL_POST_INPUT_S
+                )
+
+            if reason in {"timeout", "deliver-failed"}:
+                break
 
             for _ in range(12):
                 if reason in _EXIT_REASONS or _program_exited(step_result):
@@ -428,7 +553,6 @@ async def stream_native_execution(
                     reason = "exited"
                     break
                 stopped_file = stopped_frame.get("file") or ""
-                stopped_func = stopped_frame.get("func")
                 # The file check is authoritative: if GDB reports a user
                 # source file we're at a user source line, even if the
                 # immediate function is a compiler-generated thunk such as
@@ -441,7 +565,9 @@ async def stream_native_execution(
                 # absent entirely when there's no debug info. Step out and
                 # try again.
                 step_result = await asyncio.to_thread(_w, "-exec-finish")
-                reason = _last_stop_reason(step_result)
+                reason, exited = await _poll_for_stop(
+                    gdb, step_result, total_wait_s=STOP_POLL_BLOCKED_S
+                )
 
             if reason in _EXIT_REASONS or _program_exited(step_result):
                 chunk = tail.read_new()
@@ -474,23 +600,41 @@ async def stream_native_execution(
                 await asyncio.to_thread(gdb.exit)
             except Exception:  # pylint: disable=broad-except
                 pass
+        if stdin_channel is not None:
+            stdin_channel.close()
         shutil.rmtree(workdir, ignore_errors=True)
 
 
 # Backwards-compatible shims so route imports keep working.
 async def stream_c_execution(
-    code: str, *, step_budget: int = DEFAULT_STEP_BUDGET, stdin: str = ""
+    code: str,
+    *,
+    step_budget: int = DEFAULT_STEP_BUDGET,
+    stdin: str = "",
+    session_id: str = "",
 ) -> AsyncIterator[EngineEvent]:
     async for event in stream_native_execution(
-        code, language="c", step_budget=step_budget, stdin=stdin
+        code,
+        language="c",
+        step_budget=step_budget,
+        stdin=stdin,
+        session_id=session_id,
     ):
         yield event
 
 
 async def stream_cpp_execution(
-    code: str, *, step_budget: int = DEFAULT_STEP_BUDGET, stdin: str = ""
+    code: str,
+    *,
+    step_budget: int = DEFAULT_STEP_BUDGET,
+    stdin: str = "",
+    session_id: str = "",
 ) -> AsyncIterator[EngineEvent]:
     async for event in stream_native_execution(
-        code, language="cpp", step_budget=step_budget, stdin=stdin
+        code,
+        language="cpp",
+        step_budget=step_budget,
+        stdin=stdin,
+        session_id=session_id,
     ):
         yield event
