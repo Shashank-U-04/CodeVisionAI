@@ -56,10 +56,10 @@ Per-language tracer strategy:
 | Language | Strategy |
 |---|---|
 | **Python** | Pyodide WebAssembly in a Web Worker — never hits the API |
-| **C / C++** | `gcc`/`g++ -g3 -O0` + `gdb --interpreter=mi2` driven by [pygdbmi](https://pypi.org/project/pygdbmi/). Stdout is captured via a `freopen` prologue; stdin uses `dup2` on fd 0 with a constructor priority of 101 so it runs before libstdc++'s `ios_base::Init` |
+| **C / C++** | `gcc`/`g++ -g3 -O0` + `gdb --interpreter=mi2` driven by [pygdbmi](https://pypi.org/project/pygdbmi/). Stdout is captured via a `freopen` prologue; stdin is a cross-platform pipe (Windows named pipe / POSIX FIFO) dup2'd onto fd 0 by a constructor-101 prologue so `scanf` / `cin` *block* on read instead of seeing EOF |
 | **Java** | JDI over JDWP launched via a `MainLauncher` bootstrap that installs a `CvaiInputStream` wrapping `System.in`. Step events are filtered to the user's main class |
 
-Interactive input flow: when a program calls `Scanner.nextInt()` (or `scanf`, etc.) with nothing left in the pre-supplied buffer, the tracer emits `INPUT_REQUEST` over SSE; the frontend POSTs the user's value to `/execute/input/{sid}`, the session bus unblocks the tracer, and execution continues.
+Interactive input flow: when a program calls `Scanner.nextInt()` / `scanf` / `cin >> x` with nothing left in the pre-supplied buffer, the tracer detects the blocked read and emits `INPUT_REQUEST` over SSE. The frontend POSTs the user's value to `/execute/input/{sid}`, the session bus unblocks the tracer, and execution continues — same handshake for every server-backed language.
 
 ## Getting Started
 
@@ -81,11 +81,20 @@ Then open <http://localhost:3000>. Python visualization works without the backen
 
 ```bash
 cd apps/api
-pip install -r requirements.txt pygdbmi
+pip install -r requirements.txt
 python -m uvicorn app.main:app --port 8000
 ```
 
-Set `NEXT_PUBLIC_API_URL=http://127.0.0.1:8000` in `apps/web/.env.local` so the remote engine knows where to find the API. `CVAI_ALLOWED_ORIGINS` on the API side controls CORS.
+Set `NEXT_PUBLIC_API_URL=http://127.0.0.1:8000` in `apps/web/.env.local` so the remote engine knows where to find the API. `CVAI_ALLOWED_ORIGINS` on the API side controls CORS. `CVAI_LOG_JSON=1` switches request logs to single-line JSON for ingestion pipelines.
+
+### Tests
+
+```bash
+cd apps/api
+pip install -r requirements-dev.txt
+python -m pytest                     # full suite, gates native/Java tests on toolchain availability
+python smoke_native_input_request.py # ad-hoc C/C++ interactive-input smoke
+```
 
 Headless smoke tests live in `apps/api/smoke_*.py` (one per language path, plus an HTTP-level interactive INPUT_REQUEST round-trip).
 
@@ -94,6 +103,10 @@ Headless smoke tests live in `apps/api/smoke_*.py` (one per language path, plus 
 ```bash
 npm run build
 ```
+
+### Deploy
+
+See [DEPLOY.md](./DEPLOY.md). The backend ships as a Docker image to Render (Dockerfile + `render.yaml`); the frontend ships to Vercel (`apps/web/vercel.json`). Two environment variables glue them together: `NEXT_PUBLIC_API_URL` on Vercel, `CVAI_ALLOWED_ORIGINS` on Render.
 
 ## Tech Stack
 
@@ -119,6 +132,12 @@ npm run build
 - The Java tracer compiles three classes once into `apps/api/app/tracers/java/.build/`: `JdiTracer` (the JDI driver), `MainLauncher` (bootstrap), and `CvaiInputStream` (the stdin shim that fires `INPUT_REQUEST`).
 - CSS design tokens are defined in `apps/web/src/app/globals.css`. Light mode is the default; dark mode activates via `data-theme="dark"` on `<html>`.
 - The heap panel renders boxes sized to content (no fixed widths) — heap object containers use `inline-flex` so they shrink-wrap their content.
+- A `TokenBucketLimiter` in `apps/api/app/core/rate_limit.py` caps `/execute/stream` at ~30 req/min/IP with a burst of 20; swap for Redis if the backend ever goes horizontal.
+
+## Known limitations
+
+- **C++ STL pretty-printers on MinGW 6.3.** GDB ships with Python printers for libstdc++ but the MinGW Windows distribution doesn't put them on the auto-load path, so `std::vector` and friends show their raw `_M_start` / `_M_finish` pointers instead of element lists. Linux / macOS deploys via Docker get the printers automatically through `apt install gdb`.
+- **Single-process backend.** The session bus and rate limiter live in memory; horizontal scaling needs a Redis-backed swap.
 
 ## License
 
