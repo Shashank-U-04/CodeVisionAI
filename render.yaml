@@ -1,0 +1,25 @@
+# Render Infrastructure-as-Code spec.
+#
+# Importing this repo into Render's "Blueprint" flow provisions the
+# backend service automatically. The frontend ships separately on
+# Vercel (see apps/web/vercel.json + DEPLOY.md).
+
+services:
+  - type: web
+    name: codevisionai-api
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: .
+    autoDeploy: true
+    healthCheckPath: /api/v1/health/
+    envVars:
+      - key: CVAI_ALLOWED_ORIGINS
+        sync: false  # set per-environment in Render dashboard, e.g.
+                     # https://codevisionai.vercel.app,https://*.vercel.app
+      - key: CVAI_LOG_JSON
+        value: "1"
+      - key: CVAI_LOG_LEVEL
+        value: INFO
+      - key: PYTHONUNBUFFERED
+        value: "1"
