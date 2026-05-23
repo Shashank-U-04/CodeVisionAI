@@ -61,7 +61,28 @@
       "Bash(g++ -std=c++17 -x c++ -E -)",
       "Bash(g++ -std=c++14 -x c++ -E -)",
       "Bash(curl -sN -X POST http://127.0.0.1:8000/api/v1/execute/stream -H \"Content-Type: application/json\" --data-binary '{\"language\":\"c\",\"code\":\"#include <stdio.h>\\\\nint main\\(\\){int x=42;printf\\(\\\\\"hi %d\\\\\",x\\);return 0;}\"}')",
-      "Bash(curl -sN -X POST http://127.0.0.1:8000/api/v1/execute/stream -H \"Content-Type: application/json\" -d '{\"language\":\"mock\",\"code\":\"a\"}')"
+      "Bash(curl -sN -X POST http://127.0.0.1:8000/api/v1/execute/stream -H \"Content-Type: application/json\" -d '{\"language\":\"mock\",\"code\":\"a\"}')",
+      "Bash(javac -version)",
+      "Bash(java -version)",
+      "Bash(java --list-modules)",
+      "Bash(findstr jdi *)",
+      "Bash(mkdir -p .build)",
+      "Bash(javac -d .build JdiTracer.java)",
+      "Bash(curl -s -N -X POST http://127.0.0.1:8765/api/v1/execute/stream -H \"Content-Type: application/json\" --max-time 30 -d '{\"language\":\"java\",\"code\":\"public class Main { public static void main\\(String[] a\\) { int x = 7; int y = x + 3; System.out.println\\(y\\); } }\",\"options\":{\"step_budget\":50,\"timeout_ms\":15000}}')",
+      "Bash(curl -s \"http://127.0.0.1:8765/api/v1/health/\")",
+      "Bash(git *)",
+      "Read(//c/Users/Shashank U/AppData/Local/Temp/**)",
+      "Bash(gdb --batch -ex \"set pagination off\" -ex \"break main\" -ex \"run < test_in.txt\" -ex \"next\" -ex \"where\" -ex \"next\" -ex \"where\" -ex \"next\" -ex \"where\" ./test_cin2.exe)",
+      "Bash(tasklist)",
+      "Bash(./test_cin2.exe)",
+      "Bash(echo \"exit=$?\")",
+      "Bash(gdb --batch -ex \"set pagination off\" -ex \"run < test_in.txt\" ./test_cin2.exe)",
+      "Bash(gdb --batch -ex \"set pagination off\" -ex 'set args < test_in.txt' -ex \"run\" ./test_cin2.exe)",
+      "Bash(objdump -h test_dup.exe)",
+      "Bash(objdump -t test_dup.exe)",
+      "Bash(rm -f order_marker.txt order_redirected.txt)",
+      "Bash(gdb --batch -ex \"set pagination off\" -ex \"break main\" -ex \"run\" -ex \"continue\" ./order_test.exe)",
+      "Bash(javac -d .build *.java)"
     ]
   }
 }
