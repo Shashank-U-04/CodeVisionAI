@@ -393,6 +393,7 @@ async def stream_native_execution(
     step_budget: int = DEFAULT_STEP_BUDGET,
     stdin: str = "",
     session_id: str = "",
+    timeout_s: float | None = None,
 ) -> AsyncIterator[EngineEvent]:
     spec = _SPECS[language]
     workdir = tempfile.mkdtemp(prefix=spec.tmpdir_prefix)
@@ -401,6 +402,8 @@ async def stream_native_execution(
     stdin_channel: StdinChannel | None = None
     started_at = time.monotonic()
     interactive = bool(session_id)
+    # Caller-supplied budget wins, but never exceeds the global ceiling.
+    wall_clock_s = min(timeout_s or DEFAULT_TIMEOUT_S, DEFAULT_TIMEOUT_S)
 
     def _bail(message: str) -> EngineEvent:
         return EventError(message=message)
@@ -467,7 +470,7 @@ async def stream_native_execution(
         prev_frames: list[StackFrame] | None = None
 
         for step_idx in range(step_budget):
-            if time.monotonic() - started_at > DEFAULT_TIMEOUT_S:
+            if time.monotonic() - started_at > wall_clock_s:
                 yield _bail("Execution time limit exceeded")
                 break
 
@@ -612,6 +615,7 @@ async def stream_c_execution(
     step_budget: int = DEFAULT_STEP_BUDGET,
     stdin: str = "",
     session_id: str = "",
+    timeout_s: float | None = None,
 ) -> AsyncIterator[EngineEvent]:
     async for event in stream_native_execution(
         code,
@@ -619,6 +623,7 @@ async def stream_c_execution(
         step_budget=step_budget,
         stdin=stdin,
         session_id=session_id,
+        timeout_s=timeout_s,
     ):
         yield event
 
@@ -629,6 +634,7 @@ async def stream_cpp_execution(
     step_budget: int = DEFAULT_STEP_BUDGET,
     stdin: str = "",
     session_id: str = "",
+    timeout_s: float | None = None,
 ) -> AsyncIterator[EngineEvent]:
     async for event in stream_native_execution(
         code,
@@ -636,5 +642,6 @@ async def stream_cpp_execution(
         step_budget=step_budget,
         stdin=stdin,
         session_id=session_id,
+        timeout_s=timeout_s,
     ):
         yield event

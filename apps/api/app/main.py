@@ -3,7 +3,10 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from .core.logging import configure_logging
 from .routes import execute, health
+
+configure_logging()
 
 app = FastAPI(title="CodeVision AI API")
 

@@ -141,10 +141,12 @@ async def stream_java_execution(
     step_budget: int = DEFAULT_STEP_BUDGET,
     stdin: str = "",
     session_id: str = "",
+    timeout_s: float | None = None,
 ) -> AsyncIterator[EngineEvent]:
     workdir = Path(tempfile.mkdtemp(prefix="cvai_java_"))
     started_at = time.monotonic()
     proc: asyncio.subprocess.Process | None = None
+    wall_clock_s = min(timeout_s or DEFAULT_TIMEOUT_S, DEFAULT_TIMEOUT_S)
 
     try:
         if _is_tracer_stale():
@@ -190,7 +192,7 @@ async def stream_java_execution(
 
         saw_done = False
         while True:
-            if time.monotonic() - started_at > DEFAULT_TIMEOUT_S:
+            if time.monotonic() - started_at > wall_clock_s:
                 yield EventError(message="Execution time limit exceeded")
                 break
 
