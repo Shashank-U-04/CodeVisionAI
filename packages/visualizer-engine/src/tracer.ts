@@ -22,6 +22,12 @@ class _Output:
         s = str(s)
         self.buf += s
         __post_step__(json.dumps({'type': 'OUTPUT', 'value': s}))
+    def write_silent(self, s):
+        # Record into the stdout buffer WITHOUT emitting an OUTPUT event.
+        # Used for input echo: the terminal already echoed those keystrokes
+        # locally as they were typed, so emitting them again would double them,
+        # but state.stdout still needs them to be a faithful transcript.
+        self.buf += str(s)
     def flush(self):
         pass
     def isatty(self):
@@ -41,8 +47,8 @@ def _custom_input(prompt=''):
     raw = __request_input__(str(prompt))
     if raw and raw[-1] == chr(10):
         raw = raw[:-1]
-    # Echo what the user typed + newline (matches real Python REPL behavior)
-    _out.write(raw + chr(10))
+    # Transcript-only echo — see _Output.write_silent.
+    _out.write_silent(raw + chr(10))
     return raw
 
 builtins.input = _custom_input
