@@ -43,6 +43,7 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -68,6 +69,15 @@ public final class JdiTracer {
 
     private static long stepCounter = 0;
 
+    /**
+     * Fully-qualified name of the class the user wrote. Frames outside it (the
+     * MainLauncher bootstrap, reflective invoke plumbing, and the JVM's own
+     * thread entry) are suppressed so the reported depth is the depth the
+     * learner actually wrote — matching how the Python tracer keeps only
+     * '<string>' frames and the native tracer keeps only user-file frames.
+     */
+    private static String userClass = "";
+
     public static void main(String[] rawArgs) {
         if (rawArgs.length < 2) {
             emitError("Usage: JdiTracer <target-main-class> <target-classpath> [<step-budget>]");
@@ -76,6 +86,7 @@ public final class JdiTracer {
         }
         final String targetMain = rawArgs[0];
         final String targetClasspath = rawArgs[1];
+        userClass = targetMain;
         final int stepBudget = parseBudget(rawArgs.length >= 3 ? rawArgs[2] : null);
 
         VirtualMachine vm;
@@ -282,16 +293,28 @@ public final class JdiTracer {
                 .append(',');
 
         json.append("\"frames\":[");
-        List<StackFrame> frames = thread.frames();
+        // Keep only the user's own frames; the launcher/reflection/JVM entry
+        // frames below them are noise that made every stack look 5 deeper
+        // than the program really was.
+        List<StackFrame> userFrames = new ArrayList<>();
+        for (StackFrame f : thread.frames()) {
+            if (isUserFrame(f)) {
+                userFrames.add(f);
+            }
+        }
         // JDI returns innermost frame at index 0. The project's wire format
         // (matching the Python tracer) puts innermost last, so walk in reverse.
         boolean firstFrame = true;
-        for (int i = frames.size() - 1; i >= 0; i--) {
+        for (int i = userFrames.size() - 1; i >= 0; i--) {
             if (!firstFrame) {
                 json.append(',');
             }
             firstFrame = false;
-            json.append(serializeFrame(frames.get(i), heapObjects));
+            // `main` is Java's module-level equivalent — flag it as the global
+            // frame only when it is genuinely outermost.
+            boolean isGlobal = (i == userFrames.size() - 1)
+                    && "main".equals(userFrames.get(i).location().method().name());
+            json.append(serializeFrame(userFrames.get(i), heapObjects, isGlobal));
         }
         json.append("],");
 
@@ -313,12 +336,23 @@ public final class JdiTracer {
         emit(json.toString());
     }
 
-    private static String serializeFrame(StackFrame frame, Map<Long, String> heapObjects) {
+    /** True when the frame belongs to the user's class or one of its nested classes. */
+    private static boolean isUserFrame(StackFrame frame) {
+        try {
+            String declaring = frame.location().declaringType().name();
+            return declaring.equals(userClass) || declaring.startsWith(userClass + "$");
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    private static String serializeFrame(StackFrame frame, Map<Long, String> heapObjects,
+                                         boolean isGlobal) {
         StringBuilder b = new StringBuilder(128);
         b.append('{');
         b.append("\"name\":").append(jsonString(frame.location().method().name())).append(',');
         b.append("\"line\":").append(frame.location().lineNumber()).append(',');
-        b.append("\"isGlobal\":false,");
+        b.append("\"isGlobal\":").append(isGlobal).append(',');
         b.append("\"locals\":{");
         boolean first = true;
         try {
