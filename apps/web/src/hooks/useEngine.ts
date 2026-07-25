@@ -36,10 +36,17 @@ export function useEngine() {
         case 'STEP':
           store.addStep(event.state);
           break;
-        case 'OUTPUT':
-          store.appendOutput(event.value);
-          term?.write(event.value.replace(/\n/g, '\r\n'));
+        case 'OUTPUT': {
+          // Tracers disagree on line endings: GDB and the JVM emit CRLF on
+          // Windows while Pyodide emits LF. Canonicalize to LF once so the
+          // store holds a consistent transcript, then expand to CRLF for the
+          // terminal. Without this, CRLF input became "\r\r\n" and
+          // double-spaced every line of C/C++/Java output.
+          const text = event.value.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+          store.appendOutput(text);
+          term?.write(text.replace(/\n/g, '\r\n'));
           break;
+        }
         case 'INPUT_REQUEST':
           store.setInputRequest({ prompt: event.prompt });
           store.setStatus('paused_on_input');

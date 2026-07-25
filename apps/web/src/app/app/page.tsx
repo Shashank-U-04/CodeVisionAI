@@ -279,13 +279,13 @@ export default function AppPage() {
             style={{ height: '38%', borderTop: '1px solid var(--cv-border)' }}
           >
             <PanelTab label="Console (input / output)" dotColor="var(--cv-accent)" />
-            <div className="flex-1 overflow-hidden p-1.5" style={{ background: 'var(--cv-bg)' }}>
+            <div className="flex-1 overflow-hidden p-1.5" style={{ background: 'var(--cv-console-bg)' }}>
               <XTermConsole onInputSubmit={provideInput} registerHandle={registerTerminal} />
             </div>
             {error && (
               <div
                 className="px-3 py-1.5 text-[11px] font-mono"
-                style={{ background: 'rgba(220,38,38,0.10)', borderTop: '1px solid var(--cv-border)', color: '#fca5a5' }}
+                style={{ background: 'rgba(220,38,38,0.10)', borderTop: '1px solid var(--cv-border)', color: 'var(--cv-danger)' }}
                 role="alert"
               >
                 {error}
