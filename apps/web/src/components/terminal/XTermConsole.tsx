@@ -4,6 +4,8 @@ import { useEffect, useRef } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
+import { useThemeStore } from '@/stores/themeStore';
+import { buildTerminalTheme } from '@/lib/surfaceTheme';
 
 interface XTermConsoleProps {
   onInputSubmit: (line: string) => void;
@@ -17,42 +19,30 @@ export interface XTermHandle {
   setInputMode: (active: boolean) => void;
 }
 
-const APP_THEME = {
-  background: '#09090b',     // zinc-950
-  foreground: '#e4e4e7',     // zinc-200
-  cursor:     '#60a5fa',     // blue-400
-  cursorAccent: '#09090b',
-  selectionBackground: '#3b82f680',
-  black:   '#27272a',
-  red:     '#f87171',
-  green:   '#4ade80',
-  yellow:  '#facc15',
-  blue:    '#60a5fa',
-  magenta: '#c084fc',
-  cyan:    '#22d3ee',
-  white:   '#e4e4e7',
-  brightBlack:   '#52525b',
-  brightRed:     '#fca5a5',
-  brightGreen:   '#86efac',
-  brightYellow:  '#fde047',
-  brightBlue:    '#93c5fd',
-  brightMagenta: '#d8b4fe',
-  brightCyan:    '#67e8f9',
-  brightWhite:   '#fafafa',
-};
-
 export function XTermConsole({ onInputSubmit, registerHandle }: XTermConsoleProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const inputModeRef = useRef(false);
   const inputBufferRef = useRef('');
+  const theme = useThemeStore((s) => s.theme);
+
+  // Recolor in place on theme flip. The terminal is deliberately NOT rebuilt —
+  // tearing it down would wipe the scrollback of the current run.
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term) return;
+    const frame = requestAnimationFrame(() => {
+      term.options.theme = buildTerminalTheme(theme);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [theme]);
 
   useEffect(() => {
     if (!containerRef.current) return;
 
     const term = new Terminal({
-      theme: APP_THEME,
+      theme: buildTerminalTheme(useThemeStore.getState().theme),
       fontFamily: 'var(--font-geist-mono), Menlo, Consolas, monospace',
       fontSize: 13,
       lineHeight: 1.3,

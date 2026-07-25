@@ -201,6 +201,19 @@
   --cv-code-bg:     #F8F9FA;
   --cv-code-border: #E5E7EB;
 
+  /* Editor + console surfaces. These drive the Monaco and xterm themes via
+     lib/surfaceTheme.ts — the canvas-based widgets can't read CSS vars
+     themselves, so they read these at runtime and rebuild on theme change. */
+  --cv-editor-bg:        #ffffff;
+  --cv-editor-fg:        #18181b;
+  --cv-editor-gutter-fg: #9ca3af;
+  --cv-editor-selection: #bfdbfe;
+  --cv-console-bg:       #ffffff;
+  --cv-console-fg:       #18181b;
+  --cv-console-cursor:   #2563eb;
+  --cv-console-sel:      #bfdbfe;
+  --cv-current-line-bg:  rgba(245, 158, 11, 0.28);
+
   --cv-shadow-sm: 0 1px 2px rgba(0,0,0,0.04);
   --cv-shadow:    0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);
   --cv-shadow-md: 0 4px 6px -1px rgba(0,0,0,0.08), 0 2px 4px -2px rgba(0,0,0,0.04);
@@ -241,6 +254,8 @@
 
   --cv-accent:  #60a5fa;
   --cv-arrow:   #60a5fa;
+  --cv-success: #4ade80;
+  --cv-danger:  #f87171;
 
   --cv-active-border:    #3b82f6;
   --cv-active-glow:      rgba(59,130,246,0.20);
@@ -287,6 +302,16 @@
 
   --cv-code-bg:     #131316;
   --cv-code-border: #2E2E38;
+
+  --cv-editor-bg:        #131318;
+  --cv-editor-fg:        #f4f4f5;
+  --cv-editor-gutter-fg: #6b7280;
+  --cv-editor-selection: #1e3a8a;
+  --cv-console-bg:       #0f0f14;
+  --cv-console-fg:       #e4e4e7;
+  --cv-console-cursor:   #60a5fa;
+  --cv-console-sel:      #1e3a8a;
+  --cv-current-line-bg:  rgba(255, 210, 50, 0.12);
 
   --cv-shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
   --cv-shadow:    0 1px 3px rgba(0,0,0,0.35), 0 1px 2px rgba(0,0,0,0.25);
@@ -348,7 +373,8 @@
 
 /* Monaco — current execution line highlight + red gutter arrow */
 .cv-current-line {
-  background-color: rgba(255, 210, 50, 0.12) !important;
+  /* Needs far more alpha on white than on near-black to stay visible. */
+  background-color: var(--cv-current-line-bg) !important;
 }
 .cv-current-line-glyph {
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'><path d='M3 2 L13 8 L3 14 Z' fill='%23ef4444'/></svg>");

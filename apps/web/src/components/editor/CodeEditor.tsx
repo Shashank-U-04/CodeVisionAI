@@ -1,7 +1,9 @@
 'use client';
 
 import { useRef, useEffect } from 'react';
-import MonacoEditor, { type OnMount } from '@monaco-editor/react';
+import MonacoEditor, { type OnMount, type BeforeMount } from '@monaco-editor/react';
+import { useThemeStore } from '@/stores/themeStore';
+import { buildMonacoTheme, MONACO_THEME_NAME } from '@/lib/surfaceTheme';
 
 interface Props {
   value: string;
@@ -17,14 +19,36 @@ export function CodeEditor({ value, onChange, currentLine, readOnly = false, onL
   const monacoRef = useRef<Parameters<OnMount>[1] | null>(null);
   const decorationsRef = useRef<string[]>([]);
   const onLineClickRef = useRef(onLineClick);
+  const theme = useThemeStore((s) => s.theme);
 
   useEffect(() => {
     onLineClickRef.current = onLineClick;
   }, [onLineClick]);
 
+  // Register both themes before Monaco paints, so the first frame is already
+  // the right color instead of flashing vs-dark.
+  const handleBeforeMount: BeforeMount = (monaco) => {
+    monaco.editor.defineTheme(MONACO_THEME_NAME.light, buildMonacoTheme('light'));
+    monaco.editor.defineTheme(MONACO_THEME_NAME.dark, buildMonacoTheme('dark'));
+  };
+
+  // Re-derive on every flip: the token values themselves change with
+  // [data-theme], so the theme has to be rebuilt, not just re-selected.
+  // rAF guarantees the attribute is flushed before we read computed styles.
+  useEffect(() => {
+    const monaco = monacoRef.current;
+    if (!monaco) return;
+    const frame = requestAnimationFrame(() => {
+      monaco.editor.defineTheme(MONACO_THEME_NAME[theme], buildMonacoTheme(theme));
+      monaco.editor.setTheme(MONACO_THEME_NAME[theme]);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [theme]);
+
   const handleMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
     monacoRef.current = monaco;
+    monaco.editor.setTheme(MONACO_THEME_NAME[theme]);
 
     // Click-to-jump: when the user clicks on a line, find that step.
     editor.onMouseDown((e) => {
@@ -65,9 +89,10 @@ export function CodeEditor({ value, onChange, currentLine, readOnly = false, onL
     <MonacoEditor
       height="100%"
       language={language ?? 'python'}
-      theme="vs-dark"
+      theme={MONACO_THEME_NAME[theme]}
       value={value}
       onChange={(val) => onChange(val ?? '')}
+      beforeMount={handleBeforeMount}
       onMount={handleMount}
       options={{
         fontSize: 13,
