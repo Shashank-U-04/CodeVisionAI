@@ -56,8 +56,14 @@ Per-language tracer strategy:
 | Language | Strategy |
 |---|---|
 | **Python** | Pyodide WebAssembly in a Web Worker — never hits the API |
-| **C / C++** | `gcc`/`g++ -g3 -O0` + `gdb --interpreter=mi2` driven by [pygdbmi](https://pypi.org/project/pygdbmi/). Stdout is captured via a `freopen` prologue; stdin is a cross-platform pipe (Windows named pipe / POSIX FIFO) dup2'd onto fd 0 by a constructor-101 prologue so `scanf` / `cin` *block* on read instead of seeing EOF |
-| **Java** | JDI over JDWP launched via a `MainLauncher` bootstrap that installs a `CvaiInputStream` wrapping `System.in`. Step events are filtered to the user's main class |
+| **C / C++** | `gcc`/`g++ -g3 -O0` + `gdb --interpreter=mi2` driven by [pygdbmi](https://pypi.org/project/pygdbmi/). Steps with `-exec-step` so the call stack grows through user-defined functions, unwinding out of library frames with `-exec-finish`; frames are filtered to the user's translation unit. Stdout is captured via a `freopen` prologue; stdin is a cross-platform pipe (Windows named pipe / POSIX FIFO) dup2'd onto fd 0 by a constructor-101 prologue so `scanf` / `cin` *block* on read instead of seeing EOF |
+| **Java** | JDI over JDWP launched via a `MainLauncher` bootstrap that installs a `CvaiInputStream` wrapping `System.in`. Step events are filtered to the user's main class, and reported frames are filtered to the user's class and its nested classes so launcher/reflection frames stay hidden |
+
+Both server tracers report only the frames the learner wrote, so stack depth
+means the same thing in all four languages. C/C++ aggregates (arrays, structs,
+and arrays of structs) are decoded into heap objects with reference arrows;
+locals stay hidden until execution passes their declaration, so a snapshot
+never shows indeterminate stack garbage as if it were a real value.
 
 Interactive input flow: when a program calls `Scanner.nextInt()` / `scanf` / `cin >> x` with nothing left in the pre-supplied buffer, the tracer detects the blocked read and emits `INPUT_REQUEST` over SSE. The frontend POSTs the user's value to `/execute/input/{sid}`, the session bus unblocks the tracer, and execution continues — same handshake for every server-backed language.
 
@@ -136,8 +142,15 @@ See [DEPLOY.md](./DEPLOY.md). The backend ships as a Docker image to Render (Doc
 
 ## Known limitations
 
-- **C++ STL pretty-printers on MinGW 6.3.** GDB ships with Python printers for libstdc++ but the MinGW Windows distribution doesn't put them on the auto-load path, so `std::vector` and friends show their raw `_M_start` / `_M_finish` pointers instead of element lists. Linux / macOS deploys via Docker get the printers automatically through `apt install gdb`.
+- **C++ STL pretty-printers on MinGW 6.3.** GDB ships with Python printers for libstdc++ but the MinGW Windows distribution doesn't put them on the auto-load path, so `std::vector` and friends show their raw `_M_start` / `_M_finish` pointers instead of element lists. Raw arrays and structs are decoded regardless. Linux / macOS deploys via Docker get the printers automatically through `apt install gdb`.
+- **Pointers are shown as addresses.** A non-null pointer renders as its address rather than an arrow to its target — materializing the pointee needs an extra dereference per pointer per step. NULL still renders as `None`.
 - **Single-process backend.** The session bus and rate limiter live in memory; horizontal scaling needs a Redis-backed swap.
+
+## Gotchas when working on this
+
+- **Don't run the API with `uvicorn --reload` on Windows.** The reloader installs a Selector event loop, and the Java tracer's `asyncio.create_subprocess_exec` raises `NotImplementedError` there — Java runs fail with "Internal tracer error" while C/C++ keep working. Restart the server manually after backend edits instead.
+- **`@codevision/visualizer-engine` resolves from `src/`, not `dist/`.** `apps/web` transpiles it via `transpilePackages`. It used to point `main` at `dist/`, which meant a stale `tsc` output silently shadowed source edits — if you reintroduce a build step, delete `dist/` when switching back.
+- **pygdbmi's `time_to_check_for_additional_output_sec`** defaults to 0.2s, which puts a ~205ms floor on *every* MI call. The native tracer lowers it to 0.01s; that single setting is worth a ~16x speedup on stepping.
 
 ## License
 
