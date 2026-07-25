@@ -44,7 +44,7 @@ export const LANGUAGE_CONFIG: Record<Language, LanguageConfig> = {
     bgGradient: 'linear-gradient(135deg, rgba(92,107,192,0.12) 0%, rgba(121,134,203,0.06) 100%)',
     isVisualizationSupported: true,
     engineNote: 'Server backend · GCC + GDB',
-    badge: 'Preview',
+    badge: 'Full Support',
   },
   cpp: {
     label: 'C++',
@@ -57,7 +57,7 @@ export const LANGUAGE_CONFIG: Record<Language, LanguageConfig> = {
     bgGradient: 'linear-gradient(135deg, rgba(0,89,156,0.12) 0%, rgba(0,68,130,0.06) 100%)',
     isVisualizationSupported: true,
     engineNote: 'Server backend · G++ + GDB',
-    badge: 'Preview',
+    badge: 'Full Support',
   },
   java: {
     label: 'Java',
@@ -69,8 +69,8 @@ export const LANGUAGE_CONFIG: Record<Language, LanguageConfig> = {
     accentColor: '#ED8B00',
     bgGradient: 'linear-gradient(135deg, rgba(248,152,32,0.12) 0%, rgba(237,139,0,0.06) 100%)',
     isVisualizationSupported: true,
-    engineNote: 'Server backend · mock events (Phase 1)',
-    badge: 'Preview',
+    engineNote: 'Server backend · JDI over JDWP',
+    badge: 'Full Support',
   },
 };
 
@@ -92,8 +92,8 @@ def make_points(n):
 pts = make_points(3)
 print("first point:", pts[0].x, pts[0].y)
 `,
-  c: `// CodeVision AI — C Editor
-// Write and explore C code with syntax highlighting.
+  c: `// CodeVision AI — C Visualizer
+// Step through your code and watch the call stack + heap in real time.
 
 #include <stdio.h>
 
@@ -120,8 +120,8 @@ int main() {
     return 0;
 }
 `,
-  cpp: `// CodeVision AI — C++ Editor
-// Write and explore C++ code with syntax highlighting.
+  cpp: `// CodeVision AI — C++ Visualizer
+// Step through your code and watch the call stack + heap in real time.
 
 #include <iostream>
 #include <vector>
@@ -151,8 +151,8 @@ int main() {
     return 0;
 }
 `,
-  java: `// CodeVision AI — Java Editor
-// Write and explore Java code with syntax highlighting.
+  java: `// CodeVision AI — Java Visualizer
+// Step through your code and watch the call stack + heap in real time.
 
 import java.util.ArrayList;
 import java.util.List;
