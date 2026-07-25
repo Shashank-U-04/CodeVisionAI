@@ -10,7 +10,7 @@ by line, yield `EngineEvent`s on the same wire format Pyodide emits.
 Stdin is fed through a `StdinChannel` (Windows named pipe / POSIX FIFO)
 that the prologue dup2s onto fd 0. That lets `scanf`/`cin >> x` *block*
 on read when there is no data — the driver treats a missing `*stopped`
-event after `-exec-next` as "blocked on stdin" and emits INPUT_REQUEST,
+event after a step as "blocked on stdin" and emits INPUT_REQUEST,
 waits on the session bus for the frontend's reply, and writes the bytes
 back into the channel.
 """
@@ -37,8 +37,10 @@ from ..schemas.execution import (
     EventReady,
     EventStep,
     ExecutionState,
+    HeapObject,
     StackFrame,
 )
+from .decl_scan import build_decl_map, is_visible
 from .stdin_channel import StdinChannel, stdin_path_as_c_literal
 from .value_parse import parse_value
 
@@ -46,7 +48,15 @@ DEFAULT_STEP_BUDGET = 2000
 DEFAULT_TIMEOUT_S = 120.0
 GDB_CMD_TIMEOUT_S = 5.0
 COMPILE_TIMEOUT_S = 15.0
-# How long we wait for a *stopped event after -exec-next before deciding
+# pygdbmi waits this long after every command to scoop up trailing output.
+# Its 0.2s default put a hard ~205ms floor on EVERY MI call, which at several
+# calls per step made stepping into functions too slow to finish inside the
+# wall clock. Measured on MinGW: 0.2s→230ms/call, 0.02s→35ms, 0.01s→18ms, with
+# no additional truncated responses at any setting. 0.01 is where the curve
+# flattens (actual pipe I/O dominates below it), so there's nothing to gain
+# from going lower and less margin if a response arrives in two chunks.
+GDB_OUTPUT_SETTLE_S = 0.01
+# How long we wait for a *stopped event after a step before deciding
 # the inferior is blocked on stdin. Educational programs step in
 # microseconds, so 400ms is generous for "should have finished by now".
 STOP_POLL_INTERVAL_S = 0.05
@@ -249,20 +259,36 @@ def _compile(
 # ─── state extraction ─────────────────────────────────────────────────────
 
 
-def _frames_from_gdb(gdb: GdbController, spec: LangSpec) -> tuple[list[StackFrame], bool]:
+def _frames_from_gdb(
+    gdb: GdbController,
+    spec: LangSpec,
+    decl_map: dict[str, dict[str, int]],
+) -> tuple[list[StackFrame], bool, dict[int, HeapObject]]:
     stack_rec = _result_payload(gdb.write("-stack-list-frames", timeout_sec=GDB_CMD_TIMEOUT_S))
     raw_frames = (stack_rec or {}).get("stack") or []
 
+    # Normalize pygdbmi's shape, then keep only frames that belong to the
+    # user's translation unit. Library frames (printf, libstdc++, the CRT
+    # entry stubs) are dropped so the reported depth is the depth a learner
+    # actually wrote — the same contract the Python tracer honors by keeping
+    # only '<string>' frames.
+    normalized: list[dict] = [
+        (raw.get("frame", raw) if isinstance(raw, dict) else {}) for raw in raw_frames
+    ]
+    user_raw = [f for f in normalized if _is_user_file(f.get("file") or "", spec)]
+
     # Any frame at a user source file counts as user code, even if its
     # immediate function is a GCC-emitted thunk like `_fu0___ZSt3cin`.
-    in_user_code = any(
-        _is_user_file((raw.get("frame", raw) if isinstance(raw, dict) else {}).get("file") or "", spec)
-        for raw in raw_frames
-    )
+    in_user_code = bool(user_raw)
 
     frames: list[StackFrame] = []
-    for raw in raw_frames:
-        frame = raw.get("frame", raw) if isinstance(raw, dict) else {}
+    heap: dict[int, HeapObject] = {}
+    for position, frame in enumerate(user_raw):
+        # Distance from the outermost user frame. Unlike GDB's `level` (which
+        # counts from the innermost and therefore shifts as recursion grows),
+        # this is stable for the lifetime of a frame, so heap ids derived from
+        # it keep an object's identity steady across steps.
+        depth_from_outer = len(user_raw) - 1 - position
         level_raw = frame.get("level")
         try:
             level = int(level_raw) if level_raw is not None else 0
@@ -281,28 +307,63 @@ def _frames_from_gdb(gdb: GdbController, spec: LangSpec) -> tuple[list[StackFram
         except ValueError:
             line = 0
 
-        gdb.write(f"-stack-select-frame {level}", timeout_sec=GDB_CMD_TIMEOUT_S)
+        # Address the frame inline rather than selecting it first: every MI
+        # round trip has a fixed cost, so folding two calls into one halves
+        # the per-frame price of a snapshot.
         vars_rec = _result_payload(
-            gdb.write("-stack-list-variables --all-values", timeout_sec=GDB_CMD_TIMEOUT_S)
+            gdb.write(
+                f"-stack-list-variables --thread 1 --frame {level} --all-values",
+                timeout_sec=GDB_CMD_TIMEOUT_S,
+            )
         ) or {}
+
+        # `--all-values` reports name+value but omits the type column, so a
+        # struct would render as the generic "struct" instead of "Point".
+        # `--simple-values` carries the type, so harvest names->types from it
+        # and merge. Costs one extra MI call per frame, which is affordable
+        # now that a call is ~18ms rather than ~205ms.
+        types_rec = _result_payload(
+            gdb.write(
+                f"-stack-list-variables --thread 1 --frame {level} --simple-values",
+                timeout_sec=GDB_CMD_TIMEOUT_S,
+            )
+        ) or {}
+        var_types: dict[str, str] = {
+            v.get("name", ""): v.get("type", "")
+            for v in (types_rec.get("variables") or [])
+            if v.get("type")
+        }
 
         local_dict: dict = {}
         for var in vars_rec.get("variables") or []:
-            local_dict[var.get("name", "?")] = parse_value(var.get("value"), var.get("type"))
+            var_name = var.get("name", "?")
+            # Hide locals execution hasn't reached yet — otherwise they show
+            # indeterminate stack garbage (e.g. `f = 2924544` before its
+            # initializer runs), which reads as a real value to a learner.
+            if not is_visible(decl_map, func, var_name, line):
+                continue
+            local_dict[var_name] = parse_value(
+                var.get("value"),
+                var.get("type") or var_types.get(var_name),
+                heap=heap,
+                path=f"{func}@{depth_from_outer}.{var_name}",
+            )
 
         frames.append(
             StackFrame(
                 name=func,
                 line=line,
                 locals=local_dict,
-                isGlobal=(func == "main" and level == 0 and len(raw_frames) == 1),
+                isGlobal=False,
             )
         )
 
-    frames.reverse()
-    if frames:
-        gdb.write("-stack-select-frame 0", timeout_sec=GDB_CMD_TIMEOUT_S)
-    return frames, in_user_code
+    frames.reverse()  # oldest (outermost) first, matching the Python tracer
+    # `main` is C's module-level equivalent: mark it global only when it is
+    # genuinely the outermost user frame, so nested calls render as callees.
+    if frames and frames[0].name == "main":
+        frames[0] = frames[0].model_copy(update={"isGlobal": True})
+    return frames, in_user_code, heap
 
 
 def _build_state(
@@ -312,6 +373,7 @@ def _build_state(
     reason: str,
     stdout: str,
     changed: list[str],
+    heap: dict[int, HeapObject] | None = None,
 ) -> ExecutionState:
     event = "return" if reason == "function-finished" else "line"
     return ExecutionState(
@@ -320,7 +382,7 @@ def _build_state(
         event=event,
         description=f"Line {line} ({frames[-1].name if frames else '?'})" if frames else "",
         frames=frames,
-        heap={},
+        heap=heap or {},
         stdout=stdout,
         changedVars=changed,
     )
@@ -396,6 +458,9 @@ async def stream_native_execution(
     timeout_s: float | None = None,
 ) -> AsyncIterator[EngineEvent]:
     spec = _SPECS[language]
+    # Declaration lines come from the source text, so this is computed once up
+    # front and reused for every snapshot.
+    decl_map = build_decl_map(code)
     workdir = tempfile.mkdtemp(prefix=spec.tmpdir_prefix)
     out_path = os.path.join(workdir, "stdout.txt")
     gdb: GdbController | None = None
@@ -424,7 +489,10 @@ async def stream_native_execution(
         yield EventReady()
 
         def _spawn_gdb() -> GdbController:
-            return GdbController(command=["gdb", "--interpreter=mi2", "--quiet", "--nx"])
+            return GdbController(
+                command=["gdb", "--interpreter=mi2", "--quiet", "--nx"],
+                time_to_check_for_additional_output_sec=GDB_OUTPUT_SETTLE_S,
+            )
 
         gdb = await asyncio.to_thread(_spawn_gdb)
 
@@ -468,13 +536,17 @@ async def stream_native_execution(
 
         tail = _StdoutTail(out_path)
         prev_frames: list[StackFrame] | None = None
+        emitted = 0
+        last_signature: tuple[int, int] | None = None
 
         for step_idx in range(step_budget):
             if time.monotonic() - started_at > wall_clock_s:
                 yield _bail("Execution time limit exceeded")
                 break
 
-            frames, in_user_code = await asyncio.to_thread(_frames_from_gdb, gdb, spec)
+            frames, in_user_code, heap = await asyncio.to_thread(
+                _frames_from_gdb, gdb, spec, decl_map
+            )
             if not in_user_code:
                 chunk = tail.read_new()
                 if chunk:
@@ -487,18 +559,29 @@ async def stream_native_execution(
             if chunk:
                 yield EventOutput(value=chunk)
 
-            state = _build_state(step_idx, line, frames, "line", chunk, changed)
-            yield EventStep(state=state)
+            # Collapse uninformative stops. C++ range-for and operator<<
+            # expand into header code inlined at the call site, so GDB stops
+            # several times on one user line with nothing observably changed.
+            # A learner should see one step per meaningful change, not one per
+            # template instantiation.
+            signature = (line, len(frames))
+            if signature != last_signature or changed:
+                state = _build_state(
+                    emitted, line, frames, "line", chunk, changed, heap
+                )
+                yield EventStep(state=state)
+                emitted += 1
+                last_signature = signature
 
             prev_frames = frames
 
-            # -exec-next steps over function calls instead of into them.
-            # That gives up stepping into user-defined helpers but is the
-            # only reliable way to traverse iostream-heavy C++ on Windows
-            # MinGW; -exec-step lands in libstdc++ TUs that have no source
-            # information, and -exec-finish from there frequently bounces
-            # out past main entirely.
-            step_result = await asyncio.to_thread(_w, "-exec-next")
+            # -exec-step enters user-defined functions, so the call stack
+            # actually grows — that is the whole point of the visualizer.
+            # GDB degrades `step` to `next` for frames with no line info, so
+            # printf/iostream internals are stepped over for free; anything
+            # that does land in library code is unwound by the -exec-finish
+            # filter below.
+            step_result = await asyncio.to_thread(_w, "-exec-step")
             reason, exited = await _poll_for_stop(
                 gdb, step_result, total_wait_s=STOP_POLL_BLOCKED_S
             )
